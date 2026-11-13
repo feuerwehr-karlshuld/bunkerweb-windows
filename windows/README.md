@@ -36,60 +36,95 @@ All of it is written for Linux. The port keeps BunkerWeb's own code and Linux la
 | OpenSSL as a shared library used through LuaJIT FFI | OpenSSL is linked into `nginx.exe` (whole archive) and exported, so `ffi.C` finds `SSL_*` / `EVP_*`, as `lua-resty-openssl` expects. |
 | libmodsecurity.so | `libModSecurity.dll` built with MSVC 2022 using ModSecurity's own `build/win32` (conan). nginx links it through the plain C API (`msc_*`). |
 | `ffi.load("libz.so")`, `package.cpath` `*.so` | `wincompat.lua` translates library names and paths. The Lua C modules are real DLLs that keep their `.so` names. |
+| `ffi.C.inet_pton/ntohl/setenv/environ/fopen/flock/...` (libc functions Windows' `ffi.C` does not see) | `winffi.lua`: `wincompat.lua` installs an `ffi` proxy as `package.loaded["ffi"]`, so every Lua library required afterwards resolves these through ws2_32, the UCRT or a small `flock`/`fopen` emulation. No call site is patched. |
+| `io.open(f, "w")` of binary data | `wincompat.lua` adds `b` to every writing mode (text mode would turn `0x0A` into `0x0D 0x0A` and corrupt uploaded archives). |
+| `/proc/uptime` (Lua) | served by `wincompat.lua`'s `io.open` from `GetTickCount64` (Python side: patch `sync-tree-...`). |
 | `io.popen` / `os.execute` of shell commands | `wincompat.lua` runs them through `busybox sh` (busybox-w32). |
-| `kill -HUP <nginx>` (reload) | nginx for Windows signals through named events `Global\ngx_<signal>_<pid>`. `wincompat.lua` and `bwsvc.py` use them. |
+| `kill -HUP <nginx>` (reload), `resty.signal`, `ngx.process.get_master_pid` | nginx for Windows signals through named events `Global\ngx_<signal>_<pid>`. `wincompat.lua` replaces `resty.signal` and `get_master_pid` at runtime; `bwsvc.py` uses the events too. |
 | POSIX bits in Python (`fcntl`, `pwd`, `grp`, `os.getuid`, `os.kill(pid, 0)`, `SIGHUP`, ...) | `python-site/` shims, loaded through `sitecustomize`. |
+| `Path("/x").is_absolute()` (BunkerWeb's rooted paths without drive, False on Windows since Python 3.13) | `sitecustomize.py` restores the pre-3.13 `ntpath.isabs` (a leading slash counts as absolute); the certbot entry point undoes it. |
 | systemd units + `start.sh` / `bunkerweb-scheduler.sh` / `bunkerweb-ui.sh` / `bunkerweb-api.sh` | `share/windows/bwsvc.py`, a Python port of those scripts, started by [WinSW](https://github.com/winsw/winsw) services. |
 | gunicorn | waitress (web UI) and uvicorn (API). |
 | `systemctl reload bunkerweb-scheduler` | `bwctl reload-scheduler`, which uses a named event (ACL: SYSTEM and Administrators) and is mapped to the scheduler's SIGHUP handler. |
-| Config generator's libssl probe for `ssl_ecdh_curve` (`find_library("ssl")`, `libssl.so.*`) | Loads the shipped `usr\sbin\libssl-3-x64.dll` (step 12c). |
-| `DNS_RESOLVERS` default `127.0.0.11` (Docker's DNS) | Public resolvers (step 3d). |
-| `os.replace` over a live generated file | Retried for up to 20 s on `PermissionError` (step 8), because Windows refuses to replace files that another process has open. |
+| Config generator's libssl probe for `ssl_ecdh_curve` (`find_library("ssl")`, `libssl.so.*`) | Loads the shipped `usr\sbin\libssl-3-x64.dll` (patch `templator-load-the-shipped-libssl-...`). |
+| `DNS_RESOLVERS` default `127.0.0.11` (Docker's DNS) | Public resolvers (one-line replacement in `apply-windows-port.py`, step 3b). |
+| `os.replace` over a live generated file | Retried for up to 20 s on `PermissionError` (patch `sync-tree-retry-replacing-...`), because Windows refuses to replace files that another process has open. |
 
-The source-level changes to the copy of `bunkerweb/src` are anchored text replacements in
-[`build/apply-windows-port.py`](build/apply-windows-port.py) (the ModSecurity CMake trim lives in
-[`build/patch-modsecurity.py`](build/patch-modsecurity.py), so the 20 minute `modsecurity` build is only invalidated by changes
-that affect it):
+The port is deliberately **layered**, from the most robust against upstream changes to the most fragile
+(details and the ledger of every patch: [`patches/README.md`](patches/README.md)):
 
-- no `load_module` lines;
-- `select` event model;
-- no `reuseport`;
-- the health check port (hardcoded `127.0.0.1:6000` upstream) becomes the global setting `HEALTHCHECK_PORT`
-  (default 6000), so all ports of the port can be chosen in `variables.env`: `HTTP_PORT`, `HTTPS_PORT`, `API_HTTP_PORT`
-  and `HEALTHCHECK_PORT` (`bwsvc.py` and `bwctl.py` read the same keys), and the web UI port, which is the port
-  of `UI_HOST` (`bwsvc.py`; `UI_LISTEN_PORT`/`LISTEN_PORT` in `ui.env` override it);
-- the `wincompat` shim loaded first;
-- `api.lua` file locking;
-- crowdsec helpers;
-- `/proc/uptime`;
-- Let's Encrypt hook invocation;
-- the ModSecurity CMake library-only build;
-- nginx configure on win32;
-- the **installation root**: every BunkerWeb-owned absolute path (`/etc/bunkerweb`, `/etc/nginx`, `/usr/share/bunkerweb`,
-  `/var/{cache,tmp,lib,log,run}/bunkerweb`, `/tmp/bunkerweb`, `/var/www/html`) in `.py`, `.lua`, `.conf`, `.json`, `.modsec`
-  files (and `.sh` helpers of the core plugins) is rewritten to the same path below `/bunkerweb`, including paths Python
-  builds from parts (`join(sep, "usr", "share", ...)`). System paths (`/dev/null`, `/usr/bin/env`, ...) are left alone.
-  The step lists every Linux path it deliberately skipped as a `NOTE`, and fails if key files were not rewritten.
-  Files from `overlay/` are not rewritten, they already contain the final paths.
+1. **Runtime shims** (`overlay/`): `wincompat.lua` + `winffi.lua` for Lua (ffi proxy, binary `io.open`, `resty.signal`,
+   `get_master_pid`, `/proc/uptime`, busybox `popen`/`execute`) and `python-site/` for Python (POSIX modules,
+   `subprocess`, `ntpath.isabs`). Nothing in BunkerWeb's sources is touched for these.
+2. **Patch series** (`patches/*.patch`, git format-patch files): the multi-line changes with context. Seven patches:
+   HTTP/3 off, the `HEALTHCHECK_PORT` setting, the uptime in `sync_tree.py`, nginx's `configure` on win32, the
+   ModSecurity-nginx `dd()` macro, `free()` in lua-resty-core's shdict, the Templator without `fork`. Every patch states
+   why it exists, its upstream status and how to tell it is obsolete.
+3. **One-line replacements** in [`build/apply-windows-port.py`](build/apply-windows-port.py) (anchored and counted): no
+   `load_module` lines, the `select` event model, no `reuseport`, `os.uname()` in `nginx.conf`, the early error log
+   path for `nginx -t`, `require "bunkerweb.wincompat"` in `init_by_lua`, the `PYTHONPATH` separator and the hook
+   invocation of Let's Encrypt.
+4. **The installation root** ([`build/pathrewrite.py`](build/pathrewrite.py)): every BunkerWeb-owned absolute path
+   (`/etc/bunkerweb`, `/etc/nginx`, `/usr/share/bunkerweb`, `/var/{cache,tmp,lib,log,run}/bunkerweb`, `/tmp/bunkerweb`,
+   `/var/www/html`) in `.py`, `.lua`, `.conf`, `.json`, `.modsec` files (and `.sh` helpers of the core plugins) is
+   rewritten to the same path below `/bunkerweb`, including paths Python builds from parts
+   (`join(sep, "usr", "share", ...)`). System paths (`/dev/null`, `/usr/bin/env`, ...) are left alone. The step lists
+   every Linux path it deliberately skipped as a `NOTE`, and fails if key files were not rewritten. Files from
+   `overlay/` are not rewritten, they already contain the final paths.
 
-Each replacement checks how often its anchor occurs. The build fails with a list of every anchor that
-no longer matches, which is the signal to update the port after a BunkerWeb upgrade.
+The ModSecurity CMake trim lives in [`build/patch-modsecurity.py`](build/patch-modsecurity.py), so the 20 minute
+`modsecurity` build is only invalidated by changes that affect it. Overlay files must not replace upstream files: a
+collision fails the build (`OVERLAY_OVERRIDES` in `apply-windows-port.py` lists deliberate exceptions, none today).
+
+All ports of the port can be chosen in `variables.env`: `HTTP_PORT`, `HTTPS_PORT`, `API_HTTP_PORT` and
+`HEALTHCHECK_PORT` (the health check port, hardcoded `127.0.0.1:6000` upstream; `bwsvc.py` and `bwctl.py` read the same
+keys), and the web UI port, which is the port of `UI_HOST` (`bwsvc.py`; `UI_LISTEN_PORT`/`LISTEN_PORT` in `ui.env`
+override it).
+
+When upstream changes, the build fails loudly instead of producing a silently broken package: a patch that no longer
+applies, a replacement whose anchor count changed, or a key file the path rewrite no longer reaches. The failure lists
+everything at once.
+
+### Fast checks without Windows
+
+`bash windows/build/port-check.sh` (CI: [`port-check.yml`](../.github/workflows/port-check.yml), every push and nightly
+against the newest BunkerWeb release, which opens an issue when the port no longer applies) needs only git and Python:
+
+| Check | Script | Finds |
+|---|---|---|
+| unit tests | `build/test-port.py` (+ `test-winffi.lua`) | regressions in the path rewrite (golden cases), the `isabs` shim, the Lua ffi proxy (fake ffi in LuaJIT through `lupa`), the patch lint |
+| patch series lint | `build/patchtool.py lint` | patches without reason / `Upstream:` / `Check:` lines |
+| apply the port | `build/apply-windows-port.py` | stale patches and anchors, overlay collisions |
+| static checks | `build/check-port.py` | every changed file still compiles (Python), parses (LuaJIT, Jinja2, JSON); `wincompat` is first in `init_by_lua`; no `reuseport` left |
+| hazard scan | `build/scan-hazards.py` | new Linux-isms (libc symbols, shell commands, native libraries, `fork`, signals, ...) compared with `build/hazards.baseline.txt` |
+
+None of this proves that the port *runs*: the smoke test of the main pipeline still does that.
+
 
 ### Directory layout
 
 ```
 windows/
   build/
-    apply-windows-port.py     patch a copy of bunkerweb/src (anchored, counted replacements)
+    apply-windows-port.py     patch a copy of bunkerweb/src: overlay, patch series, anchored one-line replacements, path rewrite
+    pathrewrite.py            the /etc/bunkerweb -> /bunkerweb/etc/bunkerweb rewrite (import-safe, golden-tested)
+    patchseries.py            lint + apply of the patch series (git apply, no fuzz)
+    patchtool.py              import / export / lint of windows/patches (scratch git repo, 3-way rebase onto a new upstream)
     patch-modsecurity.py      the ModSecurity part of the patch (split off so the modsecurity build cache ignores the rest)
+    port-check.sh             the fast checks below, in one command
+    test-port.py, test-winffi.lua   unit tests (path rewrite, isabs shim, Lua ffi proxy)
+    check-port.py             syntax checks of every file the port changed
+    scan-hazards.py, hazards.baseline.txt   new Linux-isms in upstream code, compared with a reviewed baseline
     build-modsecurity.ps1     libModSecurity.dll (MSVC 2022 + conan + CMake)
     build-native.sh           nginx.exe, LuaJIT, cjson/gd, Lua libraries, runtime DLLs (MSYS2 UCRT64)
     build-python.ps1          private CPython + BunkerWeb requirements (+ certbot DNS alias patch)
     prepare-requirements.py   merges BunkerWeb's hashed requirement files (drops uvloop)
     stage.ps1                 assembles the tree that mirrors C:\bunkerweb\
   installer/bunkerweb.iss     Inno Setup 6 script
+  patches/                    the patch series (*.patch, .patches, BASE) and its ledger (README.md)
   overlay/
-    src/bw/lua/bunkerweb/wincompat.lua     Lua/FFI compatibility layer (copied into the patched sources)
+    src/bw/lua/bunkerweb/wincompat.lua     Lua compatibility layer (copied into the patched sources)
+    src/bw/lua/bunkerweb/winffi.lua        the ffi proxy wincompat.lua installs (libc/winsock/UCRT lookups)
     python-site/                           sitecustomize.py, fcntl.py, pwd.py, grp.py
     share/windows/bwsvc.py                 service runner (nginx, scheduler, ui, api)
     share/windows/bwctl.py                 operator helper (status, reload, logs, ...)
@@ -195,21 +230,36 @@ Run the same steps as the workflow, in this order:
 
 ## Upgrading BunkerWeb
 
+The nightly [`port-check`](../.github/workflows/port-check.yml) already tries the newest upstream release and opens an
+issue labelled `upstream-update` when the port no longer applies, so the work usually starts before you look.
+
 1. Move the submodule to the new release tag:
    ```sh
    git -C bunkerweb fetch --tags
    git -C bunkerweb checkout v1.6.18
    git add bunkerweb
    ```
-2. Push or open a PR and let the workflow run. If `apply-windows-port.py` reports anchors that no
-   longer match, adapt the replacements to the new upstream code.
-3. Check the smoke-test logs, then tag `v1.6.18-win1`.
+2. Move the patch series with git's 3-way merge (nothing is written to `bunkerweb/`):
+   ```sh
+   python windows/build/patchtool.py import --force --rev v1.6.18
+   #   conflict: resolve in build/patchwork, `git add`, `git rebase --continue`
+   python windows/build/patchtool.py export
+   ```
+   Drop a patch whose `Check:` line says upstream has fixed the problem (`git rebase -i` in the scratch repo).
+3. Run `bash windows/build/port-check.sh` (needs `pip install lupa jinja2`). Fix what it reports, in this order of
+   preference: a shim in `overlay/`, a pattern in `pathrewrite.py`, a patch, a one-line replacement in
+   `apply-windows-port.py`.
+4. Read the **hazard scan** report: every new line is something upstream now does that nobody has looked at on Windows
+   (a new libc function, shell command, native library, `fork`, signal, text-mode write, ...). Decide whether it needs
+   a shim or patch; then refresh the baseline with `python windows/build/scan-hazards.py build/src --update` and commit it with the
+   fix.
+5. Push and let the main workflow run (it is the only place that runs the port): the smoke test decides.
 
-Things that usually need attention on upgrades:
+Things that usually need attention on upgrades, which no Linux-side check can see:
 
 - new dependencies in `src/deps/deps.json` (nginx modules or Lua libraries in `build-native.sh`);
 - new Python requirements without Windows wheels;
-- new shell-outs in Lua or Python code.
+- changes of how nginx is started, reloaded or health-checked.
 
 ---
 
@@ -218,7 +268,7 @@ Things that usually need attention on upgrades:
 - **Single nginx worker, `select()` event model.** nginx for Windows does not scale like nginx on Linux. Each worker
   is limited to about 4096 sockets (`FD_SETSIZE=4096` at build time). That is plenty for a typical on-premise
   reverse proxy, but not for high-traffic sites.
-- **No HTTP/3 / QUIC**, no `reuseport`. nginx has no `http_v3_module` here, so the `http3` directive, `listen ... quic` and `$http3` are unknown: `apply-windows-port.py` step 3c disables the templates' HTTP/3 blocks and gives the limiter an empty HTTP/3 key.
+- **No HTTP/3 / QUIC**, no `reuseport`. nginx has no `http_v3_module` here, so the `http3` directive, `listen ... quic` and `$http3` are unknown: the patch `switch-http-3-quic-off-for-good` disables the templates' HTTP/3 blocks and gives the limiter an empty HTTP/3 key.
 - **Not built:** luasocket, luasec and `lua-resty-signal`. BunkerWeb's core plugins do not need them, but third-party
   plugins might.
 - **ModSecurity** is built from the vendored v3 sources with MSVC. The OWASP CRS is included. Performance on

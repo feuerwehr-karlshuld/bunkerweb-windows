@@ -1,0 +1,41 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: BunkerWeb Windows port <bunkerweb-windows@users.noreply.invalid>
+Date: Sat, 1 Jan 2000 00:00:00 +0000
+Subject: [PATCH] sync_tree: take the uptime from GetTickCount64 on Windows
+
+The tree synchronisation stamps its markers with the system uptime read from /proc/uptime, which does not exist on
+Windows. GetTickCount64 gives the same information (seconds since boot).
+
+Upstream: none yet, portable change (sys.platform branch) that could be proposed to bunkerity/bunkerweb
+Check: common/gen/sync_tree.py no longer reads /proc/uptime directly
+
+diff --git a/common/gen/sync_tree.py b/common/gen/sync_tree.py
+index ba53629..3e23c8b 100644
+--- a/common/gen/sync_tree.py
++++ b/common/gen/sync_tree.py
+@@ -11,6 +11,16 @@ from shutil import rmtree
+ from time import monotonic, sleep
+ from typing import Callable, Iterator, Optional
+ 
++
++def _bw_uptime_bytes() -> bytes:
++    import sys
++    if sys.platform == "win32":
++        import ctypes
++        ctypes.windll.kernel32.GetTickCount64.restype = ctypes.c_ulonglong
++        ticks = ctypes.windll.kernel32.GetTickCount64()
++        return f"{ticks / 1000:.2f} 0\n".encode()
++    return Path("/proc/uptime").read_bytes()
++
+ # Entries of the destination root carrying this prefix belong to the instance push (staging, trash)
+ # and to the generator's own staging area. They are never part of a render, so they are never swept.
+ # Keep the prefix in step with pushswap.RESERVED_PREFIX.
+@@ -163,7 +173,7 @@ def _remove_orphaned_marker(path: Path, logger: Logger) -> bool:
+     try:
+         token = path.read_bytes()
+         stamp = fullmatch(rb"[0-9]+\.[0-9]+\.([0-9]+)", token)
+-        uptime = match(rb"([0-9]+)\.[0-9]+\s", Path("/proc/uptime").read_bytes())
++        uptime = match(rb"([0-9]+)\.[0-9]+\s", _bw_uptime_bytes())
+         if not stamp or not uptime or int(uptime[1]) - int(stamp[1]) <= RELOAD_MARKER_MAX_AGE:
+             return False
+         # ponytail: two removers and a fresh publisher can still race between this comparison and unlink.

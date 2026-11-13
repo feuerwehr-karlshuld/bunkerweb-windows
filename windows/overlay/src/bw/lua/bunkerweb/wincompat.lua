@@ -1,12 +1,17 @@
 -- BunkerWeb for Windows: compatibility layer for nginx/LuaJIT built with MinGW-w64 (UCRT64).
 --
--- Loaded first by init_by_lua (see windows/build/apply-windows-port.py). It provides:
+-- Loaded first by init_by_lua (see windows/build/apply-windows-port.py, which only adds the require line). Everything
+-- else in BunkerWeb and its Lua libraries stays unpatched: the differences are absorbed here, at runtime.
 --   * Windows paths for package.cpath and ffi.load ("/bunkerweb/usr/..." -> "C:\bunkerweb\usr\...")
 --   * io.popen / os.execute running commands through busybox-w32 "sh -c"
---   * a tiny libc emulation (fopen/fileno/flock/fputs/fclose/fchmod) used by api.lua and the
---     crowdsec stream lock, backed by Win32 file handles and LockFileEx (flock semantics)
---   * kill()/get_master_pid() based on the named events nginx for Windows listens on
---   * uptime() replacing /proc/uptime
+--   * io.open: text mode on Windows rewrites 0x0A as 0x0D 0x0A, so every mode that writes gets "b" (BunkerWeb writes
+--     tar.gz uploads that way); "/proc/uptime" is served from GetTickCount64
+--   * a tiny libc emulation (fopen/fileno/flock/fputs/fclose/fchmod) backed by Win32 file handles and LockFileEx
+--     (flock semantics), plugged into ffi.C by the ffi proxy of winffi.lua (package.loaded["ffi"]), which also
+--     resolves inet_pton/ntohl/... (winsock), setenv/unsetenv/environ (UCRT) for every module required after this one
+--   * resty.signal (a C library that does not exist here) and ngx.process.get_master_pid, based on the named events
+--     nginx for Windows listens on
+-- Not covered at runtime: modules nginx loads before init_by_lua (resty.core), see windows/patches.
 -- On any other OS this module is an empty table and changes nothing.
 
 local M = {}
@@ -516,5 +521,42 @@ end
 function M.uptime()
 	return math.floor(tonumber(k32.GetTickCount64()) / 1000)
 end
+
+-- ------------------------------------------------------------------ io.open
+if not io.bw_wincompat_open then
+	io.bw_wincompat_open = true
+	local original_open = io.open
+	-- Only modes that write: reads in text mode are harmless, and in binary mode would hand out the \r of files written
+	-- by Python (CRLF) to Lua code that expects Unix text.
+	io.open = function(path, mode)
+		if type(mode) == "string" then
+			if path == "/proc/uptime" then
+				return make_pipe(M.uptime() .. ".00 0.00\n", 0)
+			end
+			if mode:find("[wa+]") and not mode:find("b", 1, true) then
+				mode = mode .. "b"
+			end
+		end
+		return original_open(path, mode)
+	end
+end
+
+-- ------------------------------------------------------------------ module replacements
+-- resty.signal is a Lua wrapper around librestysignal.so
+package.preload["resty.signal"] = function()
+	return { kill = M.kill }
+end
+
+-- ngx.process.get_master_pid() asks the OS for the parent process, there is no master process on Windows
+do
+	local ok, process = pcall(require, "ngx.process")
+	if ok and type(process) == "table" then
+		process.get_master_pid = M.get_master_pid
+	end
+end
+
+-- ------------------------------------------------------------------ ffi proxy
+-- Last: everything above needs the real ffi. From here on, require "ffi" returns the proxy (see winffi.lua).
+package.loaded["ffi"] = require("bunkerweb.winffi").new(ffi, libc)
 
 return M

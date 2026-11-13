@@ -1,0 +1,81 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: BunkerWeb Windows port <bunkerweb-windows@users.noreply.invalid>
+Date: Sat, 1 Jan 2000 00:00:00 +0000
+Subject: [PATCH] Switch HTTP/3 (QUIC) off for good
+
+nginx for Windows has no http_v3_module: the `http3` directive, `listen ... quic` and the $http3 variable do not exist
+and nginx refuses the whole configuration ("unknown directive http3"). HTTP3 defaults to yes upstream, so the template
+blocks are disabled whatever HTTP3 says, the connection limiter gets an always-empty key for its HTTP/3 zone and the
+setting's default becomes no.
+
+Upstream: none, Windows specific (nginx has no HTTP/3 on Windows)
+Check: `nginx -V` of the Windows build lists --with-http_v3_module, or the smoke test passes with the HTTP3 blocks enabled
+
+diff --git a/common/confs/default-server-http.conf b/common/confs/default-server-http.conf
+index 27381aa..f368c7b 100644
+--- a/common/confs/default-server-http.conf
++++ b/common/confs/default-server-http.conf
+@@ -74,7 +74,7 @@ server {
+ 		{% endif %}
+ 	{% endfor %}
+ 
+-	{% if "TLSv1.3" in SSL_PROTOCOLS and HTTP3 == "yes" and USE_PROXY_PROTOCOL == "no" %}
++	{% if "TLSv1.3" in SSL_PROTOCOLS and false and USE_PROXY_PROTOCOL == "no" %}
+ 	http3 on;
+ 		{% for k, port in all.items() if k.startswith("HTTPS_PORT") %}
+ 	listen 0.0.0.0:{{ port }} quic reuseport default_server;
+diff --git a/common/confs/server-http/ssl-certificate-lua.conf b/common/confs/server-http/ssl-certificate-lua.conf
+index aa8e794..764b1d5 100644
+--- a/common/confs/server-http/ssl-certificate-lua.conf
++++ b/common/confs/server-http/ssl-certificate-lua.conf
+@@ -51,7 +51,7 @@ listen [::]:{{ port }}{{ common_options }};
+ 	{% endfor %}
+ {% endif %}
+ 
+-{% if https_ports|length > 0 and "TLSv1.3" in SSL_PROTOCOLS and HTTP3 == "yes" and USE_PROXY_PROTOCOL == "no" %}
++{% if https_ports|length > 0 and "TLSv1.3" in SSL_PROTOCOLS and false and USE_PROXY_PROTOCOL == "no" %}
+ http3 on;
+ 	{% set http3_listen_options = " quic" %}
+ 	{% if MULTISITE == "no" and DISABLE_DEFAULT_SERVER == "no" and IS_LOADING == "no" %}
+diff --git a/common/core/limit/confs/http/limitconn.conf b/common/core/limit/confs/http/limitconn.conf
+index ff023cf..2cc8138 100644
+--- a/common/core/limit/confs/http/limitconn.conf
++++ b/common/core/limit/confs/http/limitconn.conf
+@@ -1,7 +1,7 @@
+ {%- if has_variable(all, "USE_LIMIT_CONN", "yes") -%}
+ 
+ # Combined key is empty only for HTTP/1.x (both $http2 and $http3 empty).
+-map "$http2$http3" $v1ip {
++map "$http2" $v1ip {
+ 	""       $binary_remote_addr;
+ 	default  "";
+ }
+@@ -12,10 +12,9 @@ map $http2 $v2ip {
+ 	""      "";
+ }
+ 
+-map $http3 $v3ip {
+-	# This will be "h3" for HTTP/3 connections. Empty otherwise.
+-	default $binary_remote_addr;
+-	""      "";
++map $http2 $v3ip {
++	# no HTTP/3 on Windows: always empty, so this limit never applies
++	default "";
+ }
+ 
+ limit_conn_zone $v1ip zone=v1ips:10m;
+diff --git a/common/core/misc/plugin.json b/common/core/misc/plugin.json
+index 10c1fe6..23688b2 100644
+--- a/common/core/misc/plugin.json
++++ b/common/core/misc/plugin.json
+@@ -80,8 +80,8 @@
+     },
+     "HTTP3": {
+       "context": "multisite",
+-      "default": "yes",
+-      "help": "Support HTTP3 protocol when HTTPS is enabled.",
++      "default": "no",
++      "help": "Not available on Windows (nginx has no HTTP/3 there). Support HTTP3 protocol when HTTPS is enabled.",
+       "id": "http3",
+       "label": "HTTP3",
+       "regex": "^(yes|no)$",

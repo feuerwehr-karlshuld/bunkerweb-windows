@@ -7,6 +7,9 @@ pieces are provided here:
 * uid/gid helpers, chown, setuid & co. as harmless no-ops (geteuid() is 1, never root)
 * os.sched_getaffinity / os.getloadavg / O_CLOEXEC / O_NOFOLLOW
 * os.rename with POSIX "replace" semantics
+* ntpath.isabs (and so os.path.isabs, Path.is_absolute) with the pre-3.13 rule: a path with a leading slash is absolute.
+  Python >= 3.13 requires a drive, but BunkerWeb's paths are rooted without one ("/bunkerweb/...", resolved against
+  the current drive, see AGENTS.md), and its path validators would reject every one of them
 * os.kill(pid, 0) as a liveness probe (on Windows it would terminate the process)
 * signal.SIGHUP (aliased to SIGBREAK, see windows/bwsvc.py)
 * subprocess.Popen: run *.py / *.sh / shebang scripts through python / busybox sh, find *.exe,
@@ -17,6 +20,24 @@ see the plain Windows behaviour (certbot) can remove them again.
 """
 
 import sys
+
+
+def _rooted_isabs(original):
+    """ntpath.isabs as of Python <= 3.12: additionally true for "/x" and "\\x" (root without drive)."""
+
+    def isabs(path):
+        import os
+
+        if original(path):
+            return True
+        try:
+            text = os.fspath(path)
+        except TypeError:
+            return False
+        return text[:1] in ("/", "\\", b"/", b"\\")
+
+    return isabs
+
 
 if sys.platform == "win32":
     import ctypes
@@ -61,6 +82,12 @@ if sys.platform == "win32":
     # POSIX rename() replaces an existing destination, Windows' rename() refuses to
     os._bw_original_rename = os.rename
     os.rename = os.replace
+
+    # Python >= 3.13: a rooted path without drive is no longer absolute (see _rooted_isabs)
+    import ntpath
+
+    os._bw_original_isabs = ntpath.isabs
+    ntpath.isabs = _rooted_isabs(ntpath.isabs)
 
     if not hasattr(signal, "SIGHUP"):
         signal.SIGHUP = signal.SIGBREAK

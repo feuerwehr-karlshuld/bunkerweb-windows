@@ -15,6 +15,10 @@ for _name in getattr(os, "_bw_shims", ()):
         delattr(os, _name)
 if hasattr(os, "_bw_original_rename"):
     os.rename = os._bw_original_rename
+if hasattr(os, "_bw_original_isabs"):
+    import ntpath
+
+    ntpath.isabs = os._bw_original_isabs
 
 from certbot.main import main  # noqa: E402
 

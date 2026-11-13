@@ -117,7 +117,7 @@ Get-Content "$bw\windows\BUILDINFO"
 foreach ($required in "$Out\usr\sbin\nginx.exe", "$Out\usr\sbin\lua51.dll", "$Out\usr\sbin\libModSecurity.dll",
     "$bw\python\python.exe", "$bw\python\python3.exe", "$bw\windows\bwsvc.py", "$bw\deps\lib\lua\cjson.so",
     "$bw\deps\lib\lua\libz.so", "$bw\deps\lib\libmaxminddb.so", "$bw\deps\python\bin\certbot",
-    "$bw\lua\bunkerweb\wincompat.lua", "$Out\usr\bin\busybox.exe") {
+    "$bw\lua\bunkerweb\wincompat.lua", "$bw\lua\bunkerweb\winffi.lua", "$Out\usr\bin\busybox.exe") {
     if (-not (Test-Path $required)) { throw "Staged tree is missing $required" }
 }
 $size = (Get-ChildItem -Recurse -File $Out | Measure-Object -Sum Length).Sum

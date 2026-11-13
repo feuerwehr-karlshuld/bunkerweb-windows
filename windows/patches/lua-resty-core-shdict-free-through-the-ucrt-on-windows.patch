@@ -1,0 +1,52 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: BunkerWeb Windows port <bunkerweb-windows@users.noreply.invalid>
+Date: Sat, 1 Jan 2000 00:00:00 +0000
+Subject: [PATCH] lua-resty-core shdict: free() through the UCRT on Windows
+
+Values larger than the stack buffer are returned in a malloc'ed buffer that shdict frees with C.free. On Windows
+ffi.C is not guaranteed to resolve free() to the C runtime nginx.exe allocated the buffer with, so it is taken from
+ucrtbase explicitly. lua-resty-core is loaded by lua-nginx-module before init_by_lua, i.e. before wincompat.lua can
+install its ffi proxy, which is why this one cannot be handled at runtime.
+
+Upstream: none, Windows specific
+Check: wincompat.lua's ffi proxy is active before lua-resty-core loads (it is not today), or free() resolves correctly
+
+diff --git a/deps/src/lua-resty-core/lib/resty/core/shdict.lua b/deps/src/lua-resty-core/lib/resty/core/shdict.lua
+index 8d60d16..0552037 100644
+--- a/deps/src/lua-resty-core/lib/resty/core/shdict.lua
++++ b/deps/src/lua-resty-core/lib/resty/core/shdict.lua
+@@ -455,6 +455,16 @@ end
+ 
+ 
+ local value_type = ffi_new("int[1]")
++local bw_free
++if jit.os == "Windows" then
++    -- Windows port: free() has to come from the C runtime nginx.exe allocated the buffer with
++    local ok, ucrt = pcall(ffi.load, "ucrtbase")
++    if ok then
++        local ok2, f = pcall(function() return ucrt.free end)
++        if ok2 then bw_free = f end
++    end
++end
++bw_free = bw_free or C.free
+ local user_flags = ffi_new("int[1]")
+ local num_value = ffi_new("double[1]")
+ local is_stale = ffi_new("int[1]")
+@@ -638,7 +648,7 @@ local function shdict_get(zone, key)
+             -- ngx.say("len: ", tonumber(value_len[0]))
+             buf = str_value_buf[0]
+             val = ffi_str(buf, value_len[0])
+-            C.free(buf)
++            bw_free(buf)
+         else
+             val = ffi_str(buf, value_len[0])
+         end
+@@ -712,7 +722,7 @@ local function shdict_get_stale(zone, key)
+             -- ngx.say("len: ", tonumber(value_len[0]))
+             buf = str_value_buf[0]
+             val = ffi_str(buf, value_len[0])
+-            C.free(buf)
++            bw_free(buf)
+         else
+             val = ffi_str(buf, value_len[0])
+         end

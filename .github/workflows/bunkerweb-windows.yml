@@ -186,7 +186,7 @@ jobs:
         uses: actions/cache/restore@v6
         with:
           path: build/native
-          key: native-v${{ env.CACHE_VERSION }}-${{ steps.src.outputs.bunkerweb }}-${{ hashFiles('windows/build/apply-windows-port.py', 'windows/build/patch-modsecurity.py', 'windows/build/build-modsecurity.ps1', 'windows/build/build-native.sh', 'windows/overlay/src/**', '.github/actions/prepare-src/action.yml') }}
+          key: native-v${{ env.CACHE_VERSION }}-${{ steps.src.outputs.bunkerweb }}-${{ hashFiles('windows/build/apply-windows-port.py', 'windows/build/pathrewrite.py', 'windows/build/patchseries.py', 'windows/patches/**', 'windows/build/patch-modsecurity.py', 'windows/build/build-modsecurity.ps1', 'windows/build/build-native.sh', 'windows/overlay/src/**', '.github/actions/prepare-src/action.yml') }}
 
       - uses: actions/setup-python@v7
         if: steps.cache.outputs.cache-hit != 'true'

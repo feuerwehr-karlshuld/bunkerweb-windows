@@ -1,0 +1,46 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: BunkerWeb Windows port <bunkerweb-windows@users.noreply.invalid>
+Date: Sat, 1 Jan 2000 00:00:00 +0000
+Subject: [PATCH] Make the health check port a global setting
+
+Upstream hardcodes 127.0.0.1:6000 for the health check server (healthcheck.conf is a global Jinja template). On a
+Windows Server that also runs other software the port has to be selectable, like HTTP_PORT, HTTPS_PORT and
+API_HTTP_PORT already are. HEALTHCHECK_PORT defaults to 6000, so nothing changes unless it is set. bwsvc.py and bwctl.py
+read the same value from variables.env.
+
+Upstream: none yet, portable change that could be proposed to bunkerity/bunkerweb
+Check: upstream's healthcheck.conf no longer contains the literal `listen 127.0.0.1:6000;` or has an equivalent setting
+
+diff --git a/common/confs/healthcheck.conf b/common/confs/healthcheck.conf
+index fe04cfe..0c3e534 100644
+--- a/common/confs/healthcheck.conf
++++ b/common/confs/healthcheck.conf
+@@ -4,7 +4,7 @@ server {
+ 	server_name healthcheck.bunkerweb.io;
+ 
+ 	# only listen on localhost
+-	listen 127.0.0.1:6000;
++	listen 127.0.0.1:{{ HEALTHCHECK_PORT }};
+ 
+ 	# healthcheck endpoint
+ 	location ~ ^/healthz$ {
+diff --git a/common/settings.json b/common/settings.json
+index 573c919..3f6eb98 100644
+--- a/common/settings.json
++++ b/common/settings.json
+@@ -244,6 +244,15 @@
+     "regex": "^\\d+$",
+     "type": "number"
+   },
++  "HEALTHCHECK_PORT": {
++    "context": "global",
++    "default": "6000",
++    "help": "Listen port number (127.0.0.1 only) of the health check server (/healthz).",
++    "id": "healthcheck-port",
++    "label": "Health check port number",
++    "regex": "^\\d+$",
++    "type": "number"
++  },
+   "API_LISTEN_IP": {
+     "context": "global",
+     "default": "0.0.0.0",

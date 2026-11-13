@@ -44,7 +44,9 @@ All of it is written for Linux. The port keeps BunkerWeb's own code and Linux la
 | `systemctl reload bunkerweb-scheduler` | `bwctl reload-scheduler`, which uses a named event and is mapped to the scheduler's SIGHUP handler. |
 
 The source-level changes to the copy of `bunkerweb/src` are anchored text replacements in
-[`build/apply-windows-port.py`](build/apply-windows-port.py):
+[`build/apply-windows-port.py`](build/apply-windows-port.py) (the ModSecurity CMake trim lives in
+[`build/patch-modsecurity.py`](build/patch-modsecurity.py), so the 20 minute `modsecurity` build is only invalidated by changes
+that affect it):
 
 - no `load_module` lines;
 - `select` event model;
@@ -76,6 +78,7 @@ no longer matches, which is the signal to update the port after a BunkerWeb upgr
 windows/
   build/
     apply-windows-port.py     patch a copy of bunkerweb/src (anchored, counted replacements)
+    patch-modsecurity.py      the ModSecurity part of the patch (split off so the modsecurity build cache ignores the rest)
     build-modsecurity.ps1     libModSecurity.dll (MSVC 2022 + conan + CMake)
     build-native.sh           nginx.exe, LuaJIT, cjson/gd, Lua libraries, runtime DLLs (MSYS2 UCRT64)
     build-python.ps1          private CPython + BunkerWeb requirements (+ certbot DNS alias patch)

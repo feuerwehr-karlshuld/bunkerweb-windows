@@ -12,7 +12,7 @@
     *.dll                Visual C++ runtime DLLs (Microsoft.VC143.CRT)
 
 .PARAMETER Src
-  Path to the *patched copy* of bunkerweb/src (see apply-windows-port.py).
+  Path to the *patched copy* of bunkerweb/src (see patch-modsecurity.py).
 #>
 param(
     [Parameter(Mandatory)] [string] $Src,

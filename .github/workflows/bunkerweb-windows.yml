@@ -1,7 +1,7 @@
 # BunkerWeb for Windows - builds a native Windows installer from the bunkerweb submodule.
 #
 # The submodule (bunkerweb/) is never modified: every job copies bunkerweb/src to build/src and applies the
-# Windows port there (.github/actions/prepare-src -> windows/build/apply-windows-port.py).
+# Windows port there (.github/actions/prepare-src -> windows/build/patch-modsecurity.py + apply-windows-port.py).
 #
 #   modsecurity  libModSecurity.dll (MSVC 2022 + conan, ModSecurity's own build/win32)
 #   native       nginx.exe + modules, LuaJIT, Lua C modules, runtime DLLs (MSYS2 UCRT64 / GCC)
@@ -105,7 +105,7 @@ jobs:
         uses: actions/cache/restore@v6
         with:
           path: build/modsecurity
-          key: modsecurity-v${{ env.CACHE_VERSION }}-${{ steps.src.outputs.bunkerweb }}-${{ hashFiles('windows/build/apply-windows-port.py', 'windows/build/build-modsecurity.ps1', '.github/actions/prepare-src/action.yml') }}
+          key: modsecurity-v${{ env.CACHE_VERSION }}-${{ steps.src.outputs.bunkerweb }}-${{ hashFiles('windows/build/patch-modsecurity.py', 'windows/build/build-modsecurity.ps1', '.github/actions/prepare-src/action.yml') }}
 
       - uses: actions/setup-python@v7
         if: steps.cache.outputs.cache-hit != 'true'
@@ -114,6 +114,8 @@ jobs:
 
       - uses: ./.github/actions/prepare-src
         if: steps.cache.outputs.cache-hit != 'true'
+        with:
+          scope: modsecurity
 
       - name: Install conan
         if: steps.cache.outputs.cache-hit != 'true'
@@ -184,7 +186,7 @@ jobs:
         uses: actions/cache/restore@v6
         with:
           path: build/native
-          key: native-v${{ env.CACHE_VERSION }}-${{ steps.src.outputs.bunkerweb }}-${{ hashFiles('windows/build/apply-windows-port.py', 'windows/build/build-modsecurity.ps1', 'windows/build/build-native.sh', 'windows/overlay/src/**', '.github/actions/prepare-src/action.yml') }}
+          key: native-v${{ env.CACHE_VERSION }}-${{ steps.src.outputs.bunkerweb }}-${{ hashFiles('windows/build/apply-windows-port.py', 'windows/build/patch-modsecurity.py', 'windows/build/build-modsecurity.ps1', 'windows/build/build-native.sh', 'windows/overlay/src/**', '.github/actions/prepare-src/action.yml') }}
 
       - uses: actions/setup-python@v7
         if: steps.cache.outputs.cache-hit != 'true'

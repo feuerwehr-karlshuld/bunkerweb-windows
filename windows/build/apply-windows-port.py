@@ -164,6 +164,11 @@ rep(
     1,
 )
 
+# The pushed .tar.gz is written with io.open(tmp, "w+"): on Windows that is TEXT mode, every 0x0A byte of the (binary) gzip
+# stream becomes 0x0D 0x0A and `tar xzf` then fails ("cannot extract archive", HTTP 500 for /confs, /cache, /custom_configs,
+# /pro_plugins; tiny archives without a 0x0A byte happened to work). Binary mode is what Linux always was.
+rep(API, 'local file, err = open(tmp, "w+")', 'local file, err = open(tmp, "w+b")', 1)
+
 # ---------------------------------------------------------------- 6. crowdsec stream lock
 LOCK = "common/core/crowdsec/lib/stream_lock.lua"
 rep(LOCK, "ffi.C.", "C_.", 6)
@@ -270,14 +275,8 @@ for hook in ("certbot-auth.py", "certbot-cleanup.py"):
         1,
     )
 
-# ---------------------------------------------------------------- 11. ModSecurity win32 CMake: library only
-rep_re(
-    "deps/src/modsecurity/build/win32/CMakeLists.txt",
-    r"# tests\n#\n\nproject\(libModSecurityTests\).*\Z",
-    "# tests, examples and tools are not built for the BunkerWeb Windows package\n",
-    count=1,
-    flags=re.DOTALL,
-)
+# ---------------------------------------------------------------- 11. ModSecurity win32 CMake: moved to patch-modsecurity.py
+# (the modsecurity CI job caches its build on that script only, not on this one; the prepare-src action runs both)
 
 # ---------------------------------------------------------------- 12. nginx configure: system libs on win32
 # nginx's configure skips the detection of system OpenSSL/PCRE2/zlib on win32

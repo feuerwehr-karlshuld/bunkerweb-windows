@@ -1,13 +1,21 @@
 name: Prepare patched BunkerWeb sources
 description: >
   Copies bunkerweb/src (git submodule, never modified) to build/src and applies the Windows port
-  (windows/build/apply-windows-port.py). The script is deterministic, so every job re-applies it
-  instead of passing the 200+ MB tree around as an artifact. Requires a Python on PATH.
+  (windows/build/patch-modsecurity.py, then windows/build/apply-windows-port.py). The scripts are deterministic, so every job
+  re-applies them instead of passing the 200+ MB tree around as an artifact. Requires a Python on PATH.
+  With scope 'modsecurity' only the ModSecurity patch is applied (the modsecurity job caches on that script alone).
+inputs:
+  scope:
+    description: "'full' (everything) or 'modsecurity' (only windows/build/patch-modsecurity.py)"
+    required: false
+    default: full
 runs:
   using: composite
   steps:
     - name: Copy bunkerweb/src and apply the Windows port
       shell: pwsh
+      env:
+        PREPARE_SCOPE: ${{ inputs.scope }}
       run: |
         $ErrorActionPreference = 'Stop'
         if (-not (Test-Path bunkerweb/src/VERSION)) { throw 'bunkerweb submodule is not checked out (actions/checkout needs submodules: true)' }
@@ -15,7 +23,11 @@ runs:
         New-Item -ItemType Directory -Force build | Out-Null
         robocopy bunkerweb\src build\src /E /NFL /NDL /NJH /NJS /NP /R:1 /W:1
         if ($LASTEXITCODE -ge 8) { throw "robocopy failed with exit code $LASTEXITCODE" }
-        python windows/build/apply-windows-port.py build/src windows/overlay/src
-        if ($LASTEXITCODE -ne 0) { throw 'apply-windows-port.py failed (see the list of failed anchors above)' }
+        python windows/build/patch-modsecurity.py build/src
+        if ($LASTEXITCODE -ne 0) { throw 'patch-modsecurity.py failed (see the list of failed anchors above)' }
+        if ($env:PREPARE_SCOPE -ne 'modsecurity') {
+          python windows/build/apply-windows-port.py build/src windows/overlay/src
+          if ($LASTEXITCODE -ne 0) { throw 'apply-windows-port.py failed (see the list of failed anchors above)' }
+        }
         Write-Host "BunkerWeb $((Get-Content build/src/VERSION -Raw).Trim()) prepared in build/src"
         exit 0

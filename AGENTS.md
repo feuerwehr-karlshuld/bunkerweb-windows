@@ -40,6 +40,8 @@ README.md                   operator guide (install, proxy, Let's Encrypt, confi
 windows/README.md           engineering doc: Linux->Windows mapping table, layouts, build pipeline, upgrade procedure
 windows/build/
   apply-windows-port.py     anchored, COUNTED text replacements on the copy of bunkerweb/src; fails listing every stale anchor
+  patch-modsecurity.py      same mechanism, but ONLY for what build-modsecurity.ps1 compiles (deps/src/modsecurity); separate so
+                            the slow `modsecurity` job's cache key does not depend on the rest of the port
   build-modsecurity.ps1     libModSecurity.dll, MSVC 2022 + conan + CMake (ModSecurity's own build/win32)
   build-native.sh           MSYS2 UCRT64: LuaJIT, nginx.exe with ALL modules static, Lua C modules, Lua libs, runtime DLLs
   build-python.ps1          private CPython copy + hash-pinned deps (--require-hashes --no-deps --target) + certbot DNS alias patch
@@ -50,7 +52,7 @@ windows/overlay/            files copied into the build: wincompat.lua (Lua/FFI 
                             sitecustomize), bwsvc.py (service runner), bwctl.py (operator CLI), bwctl.cmd, bwcli.cmd, certbot entry
 windows/service/*.xml       WinSW 2.x service definitions: bunkerweb-nginx, -scheduler, -ui, -api
 .github/workflows/bunkerweb-windows.yml   pipeline (below)
-.github/actions/prepare-src/action.yml    robocopy bunkerweb/src -> build/src, then run apply-windows-port.py
+.github/actions/prepare-src/action.yml    robocopy bunkerweb/src -> build/src, then patch-modsecurity.py + apply-windows-port.py (input `scope: modsecurity` = only the first)
 ```
 
 ## Pipeline (`.github/workflows/bunkerweb-windows.yml`)
@@ -68,7 +70,10 @@ never replace each other).
   steps (and, for `native`, MSYS2 and the modsecurity artifact download) are skipped, the artifact is still uploaded for the next
   job. **When you add an input to a build script, add it to that job's `hashFiles(...)`**, otherwise a stale cache is served.
   What is *not* in the keys (workflow/MSYS2 package list, runner image, unpinned tools such as conan, pywin32, tzdata): bump
-  `CACHE_VERSION`. `native`'s key includes modsecurity's inputs because nginx links its output; `python`'s key contains the exact
+  `CACHE_VERSION`. `native`'s key includes modsecurity's inputs because nginx links its output; `modsecurity`'s key hashes
+  `patch-modsecurity.py`, **not** `apply-windows-port.py` (its job runs `prepare-src` with `scope: modsecurity`): a patch that changes
+  what `build-modsecurity.ps1` compiles must go into `patch-modsecurity.py`, everything else into `apply-windows-port.py`;
+  `python`'s key contains the exact
   CPython version from `setup-python`. Cache entries are scoped per branch, unused entries
   expire after 7 days. `smoke-test` is never cached.
     `package`'s key = `CACHE_VERSION` + version + port revision + bunkerweb commit + CPython version + `BUSYBOX_SHA256` +
@@ -140,6 +145,14 @@ never replace each other).
 
 *Last updated 2026-11-13. Update this section whenever the pipeline state changes.*
 
+- **Seventh CI run:** the sixth run's fix **worked** (all plugins load, nginx runs, the scheduler generates and pushes). `smoke-test`
+  failed: `healthz` stayed `loading` for 3 minutes because every push to the API except `/plugins` returned `500 cannot extract
+  archive` (`/confs`, `/cache`, `/custom_configs`, `/pro_plugins`), so nginx never got its "config received" state. Cause (inferred from
+  the code, not from a tar error message, which is discarded): `api.lua` writes the uploaded `.tar.gz` with `io.open(tmp, "w+")`,
+  which is text mode on Windows, so each `0x0A` byte of the gzip stream became `0x0D 0x0A` and `tar xzf` failed (tiny archives without a
+  `0x0A` byte survive, which is why `/plugins` worked once). Fix written, not yet re-run: `"w+b"` in step 5 of `apply-windows-port.py`.
+  If it still fails, the tar error is invisible (os.execute sends stderr to NUL): log it from `api.lua` next. Other `ffi`/`io` text-mode
+  traps to watch for: any Lua `io.open(..., "w")` of binary data (`letsencrypt.lua` writes ACME tokens in `w+`, harmless for tokens).
 - **Proactive review after the sixth run (unverified):** step 7b of `apply-windows-port.py` patches third-party Lua libraries
   that call libc/winsock via `ffi.C`, which on Windows does not see `ws2_32` or `setenv`: `lua-resty-ipmatcher` (`inet_pton`,
   `ntohl`, used by every IP check), `lua-resty-env` (`setenv`/`unsetenv`/`environ`, called per request by the whitelist plugin),

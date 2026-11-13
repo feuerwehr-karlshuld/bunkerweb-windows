@@ -716,6 +716,13 @@ jobs:
             Get-ChildItem C:\bunkerweb\etc\nginx -Recurse -File | ForEach-Object { '{0,8}  {1}' -f $_.Length, $_.FullName.Substring(3) }
             Write-Host '::endgroup::'
           }
+          if (Test-Path C:\bunkerweb\var\tmp\bunkerweb) {
+            Write-Host '::group::State files (C:\bunkerweb\var\tmp\bunkerweb; a lingering "reloading" marker blocks reloads)'
+            Write-Host ("now: {0:HH:mm:ss}" -f (Get-Date))
+            Get-ChildItem C:\bunkerweb\var\tmp\bunkerweb -File -ErrorAction SilentlyContinue | ForEach-Object { '{0:HH:mm:ss} {1,8}  {2}' -f $_.LastWriteTime, $_.Length, $_.Name }
+            if (Test-Path C:\bunkerweb\var\tmp\bunkerweb\reloading) { Write-Host ('reloading = ' + (Get-Content -Raw C:\bunkerweb\var\tmp\bunkerweb\reloading)) }
+            Write-Host '::endgroup::'
+          }
           $logRoot = 'C:\bunkerweb\var\log\bunkerweb'
           $files = @(Get-ChildItem $logRoot -Recurse -File -ErrorAction SilentlyContinue)
           # service logs (WinSW wrapper, stdout, stderr) first, then BunkerWeb's own logs

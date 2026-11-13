@@ -165,6 +165,13 @@ never replace each other).
 history below refer to `apply-windows-port.py` as it was before the robustness refactor (the multi-line ones are now patches, see the ledger in
 `windows/patches/README.md`).*
 
+- **Tenth CI run (first with the refactor + ninth-run fixes):** failed in "bwctl status / test / reload": `bwctl reload` got `503 a reload is in
+  progress (.../reloading exists)` from upstream's reload serialisation (one reload at a time; the new workers remove the marker from a
+  timer ~5 s after start, the API waits only 4 s). Cause **not proven**: most likely the scheduler's own reload shortly after start
+  (it retries such a 503, `bwctl` did not); a marker that is never removed (worker-side cleanup on Windows) is the alternative. Fix written,
+  not yet re-run: `bwctl reload` retries a 503 for up to 90 s and prints the marker's age on a persistent failure; the `Diagnostics` step
+  lists `var\tmp\bunkerweb` (marker content and mtime). If the next run still fails, the marker is stale: check the `init_worker` timer
+  (`release_reload_marker` in `init-worker-lua.conf`) and the token comparison on Windows.
 - **Robustness refactor (nothing of it has run in CI):** the port was restructured so that upstream
   releases break less (layers: runtime shims > path patterns > patch series > one-line anchors, see `windows/patches/README.md`).
   What changed:

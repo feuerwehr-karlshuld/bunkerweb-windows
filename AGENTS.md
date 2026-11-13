@@ -149,8 +149,10 @@ never replace each other).
   listeners match the configured ports, and the reverse proxy to the backend returned the marker (HTTP 200). The first failing step was
   "Unknown hosts are rejected by the default server", a **test bug**, not a port bug: the default server (`DISABLE_DEFAULT_SERVER=no`)
   correctly answered `301` (HTTP -> HTTPS redirect, access log confirms), and `Invoke-WebRequest` followed it to
-  `https://unknown.smoke.test:<port>/`, which the runner cannot resolve (`No such host is known`). Fix written, not yet re-run:
-  `-MaximumRedirection 0` on that request. The steps after it (bwctl, UI, restart, uninstall) have not been seen yet.
+  `https://unknown.smoke.test:<port>/`, which the runner cannot resolve (`No such host is known`). Adding `-MaximumRedirection 0`
+  was not enough: PowerShell 7 throws on any 3xx with it. Fix written, not yet re-run: that step and "Web UI answers on its
+  configured port" (UI redirects to login/setup too) now use `curl.exe` (`-w '%{http_code}'`, no redirect following). The steps after
+  it (bwctl, UI, restart, uninstall) have not been seen yet.
 - **Seventh CI run:** the sixth run's fix **worked** (all plugins load, nginx runs, the scheduler generates and pushes). `smoke-test`
   failed: `healthz` stayed `loading` for 3 minutes because every push to the API except `/plugins` returned `500 cannot extract
   archive` (`/confs`, `/cache`, `/custom_configs`, `/pro_plugins`), so nginx never got its "config received" state. Cause (inferred from

@@ -647,11 +647,12 @@ jobs:
 
       - name: Unknown hosts are rejected by the default server
         run: |
-          # Do not follow redirects: the default server answers unknown hosts with 301 -> https://unknown.smoke.test/ (the
-          # AUTO_REDIRECT_HTTP_TO_HTTPS default), and following it fails with "No such host is known" in the runner's DNS.
-          $r = Invoke-WebRequest -UseBasicParsing -TimeoutSec 10 -SkipHttpErrorCheck -MaximumRedirection 0 -UserAgent $env:UA -Headers @{ Host = 'unknown.smoke.test' } "http://127.0.0.1:$env:BW_HTTP_PORT/"
-          Write-Host "HTTP $($r.StatusCode)"
-          if ($r.StatusCode -eq 200 -and "$($r.Content)" -like "*$env:MARKER*") { throw 'The default server proxied an unknown host' }
+          # The default server answers unknown hosts with 301 -> https://unknown.smoke.test/ (the AUTO_REDIRECT_HTTP_TO_HTTPS
+          # default). PowerShell 7's Invoke-WebRequest throws on any 3xx with -MaximumRedirection 0, so use curl.exe (does not follow).
+          $code = & curl.exe -s -o NUL -w '%{http_code}' -m 10 -A $env:UA -H 'Host: unknown.smoke.test' "http://127.0.0.1:$env:BW_HTTP_PORT/"
+          Write-Host "HTTP $code"
+          if ($code -eq '200') { throw 'The default server answered an unknown host with 200' }
+          if ($code -eq '000') { throw 'No answer from the default server' }
 
       - name: bwctl status / test / reload / reload-scheduler
         run: |
@@ -673,8 +674,7 @@ jobs:
           $code = 0
           do {
             try {
-              $r = Invoke-WebRequest -UseBasicParsing -TimeoutSec 10 -SkipHttpErrorCheck -MaximumRedirection 0 "http://127.0.0.1:$env:BW_UI_PORT/"
-              $code = [int]$r.StatusCode
+              $code = [int](& curl.exe -s -o NUL -w '%{http_code}' -m 10 "http://127.0.0.1:$env:BW_UI_PORT/")
               Write-Host "UI: HTTP $code"
             } catch { Write-Host "UI: $($_.Exception.Message)" }
             if ($code -ge 200 -and $code -lt 500) { break }

@@ -31,7 +31,7 @@ All of it is written for Linux. The port keeps BunkerWeb's own code and Linux la
 
 | Linux | Windows port |
 |---|---|
-| `/usr/share/bunkerweb`, `/etc/bunkerweb`, `/var/lib/bunkerweb`, ... | The same paths on drive `C:`. Every service runs with working directory `C:\`, so absolute POSIX paths resolve to `C:\usr\...`, `C:\etc\...`, `C:\var\...`. |
+| `/usr/share/bunkerweb`, `/etc/bunkerweb`, `/var/lib/bunkerweb`, ... | Everything lives under one root, `C:\bunkerweb\`, keeping the Linux sub-layout: `C:\bunkerweb\usr\share\bunkerweb`, `C:\bunkerweb\etc\bunkerweb`, `C:\bunkerweb\var\lib\bunkerweb`, ... At build time BunkerWeb's own POSIX paths are rewritten to `/bunkerweb/usr/share/bunkerweb`, `/bunkerweb/etc/bunkerweb`, ... (see below). Windows resolves such drive-less rooted paths against the current drive, and every service runs with working directory `C:\bunkerweb` (on `C:`), so they land in `C:\bunkerweb\...`. Nothing is installed in `C:\usr`, `C:\etc` or `C:\var`. |
 | nginx + dynamic modules (OpenResty components) | `nginx.exe` built with MSYS2/GCC (UCRT). All modules are linked **statically**: lua, stream-lua, ndk, lua-upstream, headers-more, cookie-flag, brotli, ModSecurity-nginx. |
 | OpenSSL as a shared library used through LuaJIT FFI | OpenSSL is linked into `nginx.exe` (whole archive) and exported, so `ffi.C` finds `SSL_*` / `EVP_*`, as `lua-resty-openssl` expects. |
 | libmodsecurity.so | `libModSecurity.dll` built with MSVC 2022 using ModSecurity's own `build/win32` (conan). nginx links it through the plain C API (`msc_*`). |
@@ -55,7 +55,13 @@ The source-level changes to the copy of `bunkerweb/src` are anchored text replac
 - `/proc/uptime`;
 - Let's Encrypt hook invocation;
 - the ModSecurity CMake library-only build;
-- nginx configure on win32.
+- nginx configure on win32;
+- the **installation root**: every BunkerWeb-owned absolute path (`/etc/bunkerweb`, `/etc/nginx`, `/usr/share/bunkerweb`,
+  `/var/{cache,tmp,lib,log,run}/bunkerweb`, `/tmp/bunkerweb`, `/var/www/html`) in `.py`, `.lua`, `.conf`, `.json`, `.modsec`
+  files (and `.sh` helpers of the core plugins) is rewritten to the same path below `/bunkerweb`, including paths Python
+  builds from parts (`join(sep, "usr", "share", ...)`). System paths (`/dev/null`, `/usr/bin/env`, ...) are left alone.
+  The step lists every Linux path it deliberately skipped as a `NOTE`, and fails if key files were not rewritten.
+  Files from `overlay/` are not rewritten, they already contain the final paths.
 
 Each replacement checks how often its anchor occurs. The build fails with a list of every anchor that
 no longer matches, which is the signal to update the port after a BunkerWeb upgrade.
@@ -70,7 +76,7 @@ windows/
     build-native.sh           nginx.exe, LuaJIT, cjson/gd, Lua libraries, runtime DLLs (MSYS2 UCRT64)
     build-python.ps1          private CPython + BunkerWeb requirements (+ certbot DNS alias patch)
     prepare-requirements.py   merges BunkerWeb's hashed requirement files (drops uvloop)
-    stage.ps1                 assembles the C:\ mirror tree
+    stage.ps1                 assembles the tree that mirrors C:\bunkerweb\
   installer/bunkerweb.iss     Inno Setup 6 script
   overlay/
     src/bw/lua/bunkerweb/wincompat.lua     Lua/FFI compatibility layer (copied into the patched sources)
@@ -78,22 +84,25 @@ windows/
     share/windows/bwsvc.py                 service runner (nginx, scheduler, ui, api)
     share/windows/bwctl.py                 operator helper (status, reload, logs, ...)
     share/deps/python/bin/certbot          certbot entry point
-    bin/bwctl.cmd, bin/bwcli.cmd           command wrappers (C:\usr\bin is added to PATH)
+    bin/bwctl.cmd, bin/bwcli.cmd           command wrappers (C:\bunkerweb\usr\bin is added to PATH)
   service/bunkerweb-*.xml     WinSW service definitions
 ```
 
 ### Installed layout
 
 ```
-C:\usr\share\bunkerweb\        BunkerWeb (same layout as the Linux packages) + python\ + windows\ + service\
-C:\usr\sbin\                   nginx.exe, lua51.dll, libModSecurity.dll, OpenSSL/PCRE2/... DLLs
-C:\usr\bin\                    busybox.exe, sh.exe, openssl.exe, sqlite3.exe, luajit.exe, bwctl.cmd, bwcli.cmd
-C:\etc\bunkerweb\              variables.env, scheduler.env, ui.env, api.env, configs\, plugins\   (kept)
-C:\etc\nginx\                  generated nginx configuration
-C:\var\lib\bunkerweb\          db.sqlite3, backups, job data                                      (kept)
-C:\var\cache\bunkerweb\        job cache, Let's Encrypt certificates                               (kept)
-C:\var\log\bunkerweb\          error.log, access.log, scheduler.log, ui.log, service\*.log        (kept)
+C:\bunkerweb\usr\share\bunkerweb\        BunkerWeb (same layout as the Linux packages) + python\ + windows\ + service\
+C:\bunkerweb\usr\sbin\                   nginx.exe, lua51.dll, libModSecurity.dll, OpenSSL/PCRE2/... DLLs
+C:\bunkerweb\usr\bin\                    busybox.exe, sh.exe, openssl.exe, sqlite3.exe, luajit.exe, bwctl.cmd, bwcli.cmd
+C:\bunkerweb\etc\bunkerweb\              variables.env, scheduler.env, ui.env, api.env, configs\, plugins\   (kept)
+C:\bunkerweb\etc\nginx\                  generated nginx configuration
+C:\bunkerweb\var\lib\bunkerweb\          db.sqlite3, backups, job data                                      (kept)
+C:\bunkerweb\var\cache\bunkerweb\        job cache, Let's Encrypt certificates                               (kept)
+C:\bunkerweb\var\log\bunkerweb\          error.log, access.log, scheduler.log, ui.log, service\*.log        (kept)
 ```
+
+The only things outside `C:\bunkerweb\` are the Windows service registrations, the PATH entry, the firewall rules and the
+uninstaller (`%ProgramData%\BunkerWeb\uninstall`).
 
 Windows services:
 
@@ -190,7 +199,8 @@ Things that usually need attention on upgrades:
   plugins might.
 - **ModSecurity** is built from the vendored v3 sources with MSVC. The OWASP CRS is included. Performance on
   Windows has not been profiled.
-- **Paths are fixed to drive `C:`.**
+- **Paths are fixed to `C:\bunkerweb`** (drive `C:`). Paths you write yourself (in `variables.env`, custom configs, plugins)
+  must use `C:/bunkerweb/...` or `/bunkerweb/...`: only BunkerWeb's built-in defaults are rewritten at build time.
 - **External plugins** that execute Linux binaries or shell scripts will not work unless busybox provides the tool.
 - **Unofficial:** do not open issues at bunkerity/bunkerweb for problems of this port.
 

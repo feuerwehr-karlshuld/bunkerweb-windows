@@ -3,13 +3,13 @@
 ; Build (see .github/workflows/bunkerweb-windows.yml):
 ;   ISCC.exe /DAppVersion=1.6.17 /DPortRevision=1 /DStageDir=<stage> /DLicenseFile=<bunkerweb\LICENSE.md> /DOutputDir=<dist> bunkerweb.iss
 ;
-; The installation layout is fixed: BunkerWeb uses absolute POSIX paths (/etc/bunkerweb, /var/lib/bunkerweb,
-; /usr/share/bunkerweb ...) which Windows resolves on the C: drive.
-;   C:\usr\share\bunkerweb   program files (replaced on every upgrade)
-;   C:\usr\sbin, C:\usr\bin  nginx.exe + DLLs, tools (busybox, openssl, sqlite3, bwctl, bwcli)
-;   C:\etc\bunkerweb         configuration (variables.env, ui.env, scheduler.env, api.env, configs\, plugins\) - kept
-;   C:\var\lib\bunkerweb     database, certificates, job cache - kept
-;   C:\var\log\bunkerweb     logs - kept
+; The installation layout is fixed and entirely below C:\bunkerweb. BunkerWeb uses absolute POSIX paths (/etc/bunkerweb,
+; /var/lib/bunkerweb, ...); the build rewrites them to /bunkerweb/etc/bunkerweb ..., which Windows resolves on the C: drive.
+;   C:\bunkerweb\usr\share\bunkerweb   program files (replaced on every upgrade)
+;   C:\bunkerweb\usr\sbin, C:\bunkerweb\usr\bin  nginx.exe + DLLs, tools (busybox, openssl, sqlite3, bwctl, bwcli)
+;   C:\bunkerweb\etc\bunkerweb         configuration (variables.env, ui.env, scheduler.env, api.env, configs\, plugins\) - kept
+;   C:\bunkerweb\var\lib\bunkerweb     database, certificates, job cache - kept
+;   C:\bunkerweb\var\log\bunkerweb     logs - kept
 
 #ifndef AppVersion
   #define AppVersion "0.0.0"
@@ -27,8 +27,8 @@
   #define OutputDir "..\..\dist"
 #endif
 
-#define BW "C:\usr\share\bunkerweb"
-#define Svc "C:\usr\share\bunkerweb\service"
+#define BW "C:\bunkerweb\usr\share\bunkerweb"
+#define Svc "C:\bunkerweb\usr\share\bunkerweb\service"
 #define PS "{sys}\WindowsPowerShell\v1.0\powershell.exe"
 
 [Setup]
@@ -66,7 +66,7 @@ CloseApplications=no
 RestartIfNeededByRun=no
 
 [Messages]
-WelcomeLabel2=This will install BunkerWeb [ver] on your server as native Windows services (nginx, scheduler, web UI, API).%n%nThis is an UNOFFICIAL port, it is not supported by Bunkerity.%n%nConfiguration lives in C:\etc\bunkerweb, data in C:\var\lib\bunkerweb. Both are kept on upgrade and uninstall.
+WelcomeLabel2=This will install BunkerWeb [ver] on your server as native Windows services (nginx, scheduler, web UI, API).%n%nThis is an UNOFFICIAL port, it is not supported by Bunkerity.%n%nConfiguration lives in C:\bunkerweb\etc\bunkerweb, data in C:\bunkerweb\var\lib\bunkerweb. Both are kept on upgrade and uninstall.
 
 [Tasks]
 Name: "startservices"; Description: "Start the BunkerWeb services after installation"
@@ -74,46 +74,46 @@ Name: "webui"; Description: "Enable the web UI service (listens on 127.0.0.1:700
 Name: "firewall"; Description: "Allow inbound HTTP/HTTPS (TCP 80, 443) in Windows Firewall"
 
 [Dirs]
-Name: "C:\etc\bunkerweb"; Flags: uninsneveruninstall
-Name: "C:\etc\bunkerweb\plugins"; Flags: uninsneveruninstall
-Name: "C:\etc\bunkerweb\pro\plugins"; Flags: uninsneveruninstall
-Name: "C:\etc\bunkerweb\configs\http"; Flags: uninsneveruninstall
-Name: "C:\etc\bunkerweb\configs\stream"; Flags: uninsneveruninstall
-Name: "C:\etc\bunkerweb\configs\server-http"; Flags: uninsneveruninstall
-Name: "C:\etc\bunkerweb\configs\server-stream"; Flags: uninsneveruninstall
-Name: "C:\etc\bunkerweb\configs\default-server-http"; Flags: uninsneveruninstall
-Name: "C:\etc\bunkerweb\configs\modsec"; Flags: uninsneveruninstall
-Name: "C:\etc\bunkerweb\configs\modsec-crs"; Flags: uninsneveruninstall
-Name: "C:\etc\bunkerweb\configs\crs-plugins-before"; Flags: uninsneveruninstall
-Name: "C:\etc\bunkerweb\configs\crs-plugins-after"; Flags: uninsneveruninstall
-Name: "C:\etc\nginx"; Flags: uninsneveruninstall
-Name: "C:\var\lib\bunkerweb"; Flags: uninsneveruninstall
-Name: "C:\var\cache\bunkerweb"; Flags: uninsneveruninstall
-Name: "C:\var\log\bunkerweb\service"; Flags: uninsneveruninstall
-Name: "C:\var\run\bunkerweb"; Flags: uninsneveruninstall
-Name: "C:\var\tmp\bunkerweb"; Flags: uninsneveruninstall
-Name: "C:\var\www\html"; Flags: uninsneveruninstall
-Name: "C:\tmp\bunkerweb"; Flags: uninsneveruninstall
+Name: "C:\bunkerweb\etc\bunkerweb"; Flags: uninsneveruninstall
+Name: "C:\bunkerweb\etc\bunkerweb\plugins"; Flags: uninsneveruninstall
+Name: "C:\bunkerweb\etc\bunkerweb\pro\plugins"; Flags: uninsneveruninstall
+Name: "C:\bunkerweb\etc\bunkerweb\configs\http"; Flags: uninsneveruninstall
+Name: "C:\bunkerweb\etc\bunkerweb\configs\stream"; Flags: uninsneveruninstall
+Name: "C:\bunkerweb\etc\bunkerweb\configs\server-http"; Flags: uninsneveruninstall
+Name: "C:\bunkerweb\etc\bunkerweb\configs\server-stream"; Flags: uninsneveruninstall
+Name: "C:\bunkerweb\etc\bunkerweb\configs\default-server-http"; Flags: uninsneveruninstall
+Name: "C:\bunkerweb\etc\bunkerweb\configs\modsec"; Flags: uninsneveruninstall
+Name: "C:\bunkerweb\etc\bunkerweb\configs\modsec-crs"; Flags: uninsneveruninstall
+Name: "C:\bunkerweb\etc\bunkerweb\configs\crs-plugins-before"; Flags: uninsneveruninstall
+Name: "C:\bunkerweb\etc\bunkerweb\configs\crs-plugins-after"; Flags: uninsneveruninstall
+Name: "C:\bunkerweb\etc\nginx"; Flags: uninsneveruninstall
+Name: "C:\bunkerweb\var\lib\bunkerweb"; Flags: uninsneveruninstall
+Name: "C:\bunkerweb\var\cache\bunkerweb"; Flags: uninsneveruninstall
+Name: "C:\bunkerweb\var\log\bunkerweb\service"; Flags: uninsneveruninstall
+Name: "C:\bunkerweb\var\run\bunkerweb"; Flags: uninsneveruninstall
+Name: "C:\bunkerweb\var\tmp\bunkerweb"; Flags: uninsneveruninstall
+Name: "C:\bunkerweb\var\www\html"; Flags: uninsneveruninstall
+Name: "C:\bunkerweb\tmp\bunkerweb"; Flags: uninsneveruninstall
 
 [InstallDelete]
 ; program files are replaced completely on upgrade (configuration and data live elsewhere)
 Type: filesandordirs; Name: "{#BW}"
 
 [Files]
-Source: "{#StageDir}\usr\*"; DestDir: "C:\usr"; Flags: ignoreversion recursesubdirs createallsubdirs
-Source: "{#StageDir}\etc\nginx\mime.types"; DestDir: "C:\etc\nginx"; Flags: ignoreversion
-Source: "{#StageDir}\var\tmp\bunkerweb\*.mmdb"; DestDir: "C:\var\tmp\bunkerweb"; Flags: onlyifdoesntexist uninsneveruninstall
+Source: "{#StageDir}\usr\*"; DestDir: "C:\bunkerweb\usr"; Flags: ignoreversion recursesubdirs createallsubdirs
+Source: "{#StageDir}\etc\nginx\mime.types"; DestDir: "C:\bunkerweb\etc\nginx"; Flags: ignoreversion
+Source: "{#StageDir}\var\tmp\bunkerweb\*.mmdb"; DestDir: "C:\bunkerweb\var\tmp\bunkerweb"; Flags: onlyifdoesntexist uninsneveruninstall
 
 [Registry]
-Root: HKLM; Subkey: "SYSTEM\CurrentControlSet\Control\Session Manager\Environment"; ValueType: expandsz; ValueName: "Path"; ValueData: "{olddata};C:\usr\bin"; Check: NeedsAddPath('C:\usr\bin')
+Root: HKLM; Subkey: "SYSTEM\CurrentControlSet\Control\Session Manager\Environment"; ValueType: expandsz; ValueName: "Path"; ValueData: "{olddata};C:\bunkerweb\usr\bin"; Check: NeedsAddPath('C:\bunkerweb\usr\bin')
 
 [UninstallRun]
-Filename: "{#PS}"; Parameters: "-NoProfile -NonInteractive -ExecutionPolicy Bypass -Command ""foreach ($s in 'bunkerweb-ui','bunkerweb-api','bunkerweb-scheduler','bunkerweb-nginx') {{ if (Get-Service $s -ErrorAction SilentlyContinue) {{ Stop-Service $s -Force -ErrorAction SilentlyContinue; & ('{#Svc}\' + $s + '.exe') uninstall } }; Get-Process nginx,python,python3 -ErrorAction SilentlyContinue | Where-Object {{ $_.Path -like 'C:\usr\*' } | Stop-Process -Force; Remove-NetFirewallRule -Group 'BunkerWeb' -ErrorAction SilentlyContinue"""; Flags: runhidden waituntilterminated; RunOnceId: "RemoveServices"
+Filename: "{#PS}"; Parameters: "-NoProfile -NonInteractive -ExecutionPolicy Bypass -Command ""foreach ($s in 'bunkerweb-ui','bunkerweb-api','bunkerweb-scheduler','bunkerweb-nginx') {{ if (Get-Service $s -ErrorAction SilentlyContinue) {{ Stop-Service $s -Force -ErrorAction SilentlyContinue; & ('{#Svc}\' + $s + '.exe') uninstall } }; Get-Process nginx,python,python3 -ErrorAction SilentlyContinue | Where-Object {{ $_.Path -like 'C:\bunkerweb\usr\*' } | Stop-Process -Force; Remove-NetFirewallRule -Group 'BunkerWeb' -ErrorAction SilentlyContinue"""; Flags: runhidden waituntilterminated; RunOnceId: "RemoveServices"
 
 [UninstallDelete]
 Type: filesandordirs; Name: "{#BW}"
-Type: filesandordirs; Name: "C:\tmp\bunkerweb"
-Type: filesandordirs; Name: "C:\var\run\bunkerweb"
+Type: filesandordirs; Name: "C:\bunkerweb\tmp\bunkerweb"
+Type: filesandordirs; Name: "C:\bunkerweb\var\run\bunkerweb"
 
 [Code]
 function RunPS(const Command: String): Integer;
@@ -144,7 +144,7 @@ begin
   RunPS('foreach ($s in ''bunkerweb-ui'',''bunkerweb-api'',''bunkerweb-scheduler'',''bunkerweb-nginx'') { ' +
         'if (Get-Service $s -ErrorAction SilentlyContinue) { Stop-Service $s -Force -ErrorAction SilentlyContinue } }; ' +
         'Start-Sleep -Seconds 2; ' +
-        'Get-Process nginx,python,python3 -ErrorAction SilentlyContinue | Where-Object { $_.Path -like ''C:\usr\*'' } | Stop-Process -Force');
+        'Get-Process nginx,python,python3 -ErrorAction SilentlyContinue | Where-Object { $_.Path -like ''C:\bunkerweb\usr\*'' } | Stop-Process -Force');
 end;
 
 function InitializeSetup(): Boolean;
@@ -171,8 +171,8 @@ begin
     exit;
 
   // configuration and data contain secrets (API tokens, admin password, private keys)
-  Exec(ExpandConstant('{sys}\icacls.exe'), '"C:\etc\bunkerweb" /inheritance:r /grant:r *S-1-5-32-544:(OI)(CI)F *S-1-5-18:(OI)(CI)F', '', SW_HIDE, ewWaitUntilTerminated, Code);
-  Exec(ExpandConstant('{sys}\icacls.exe'), '"C:\var\lib\bunkerweb" /inheritance:r /grant:r *S-1-5-32-544:(OI)(CI)F *S-1-5-18:(OI)(CI)F', '', SW_HIDE, ewWaitUntilTerminated, Code);
+  Exec(ExpandConstant('{sys}\icacls.exe'), '"C:\bunkerweb\etc\bunkerweb" /inheritance:r /grant:r *S-1-5-32-544:(OI)(CI)F *S-1-5-18:(OI)(CI)F', '', SW_HIDE, ewWaitUntilTerminated, Code);
+  Exec(ExpandConstant('{sys}\icacls.exe'), '"C:\bunkerweb\var\lib\bunkerweb" /inheritance:r /grant:r *S-1-5-32-544:(OI)(CI)F *S-1-5-18:(OI)(CI)F', '', SW_HIDE, ewWaitUntilTerminated, Code);
 
   // register the services (kept as they are on upgrade: WinSW reads its XML on every start)
   RunPS('foreach ($s in ''bunkerweb-nginx'',''bunkerweb-scheduler'',''bunkerweb-ui'',''bunkerweb-api'') { ' +
@@ -205,10 +205,10 @@ begin
     exit;
   if RegQueryStringValue(HKEY_LOCAL_MACHINE, 'SYSTEM\CurrentControlSet\Control\Session Manager\Environment', 'Path', Current) then
   begin
-    P := Pos(';C:\usr\bin', Current);
+    P := Pos(';C:\bunkerweb\usr\bin', Current);
     if P > 0 then
     begin
-      Delete(Current, P, Length(';C:\usr\bin'));
+      Delete(Current, P, Length(';C:\bunkerweb\usr\bin'));
       RegWriteExpandStringValue(HKEY_LOCAL_MACHINE, 'SYSTEM\CurrentControlSet\Control\Session Manager\Environment', 'Path', Current);
     end;
   end;

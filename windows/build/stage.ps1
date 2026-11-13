@@ -1,8 +1,9 @@
 <#
 .SYNOPSIS
-  Assembles the BunkerWeb for Windows file tree. The tree mirrors the target drive (C:\), because
-  BunkerWeb uses absolute POSIX paths (/usr/share/bunkerweb, /etc/bunkerweb, /var/lib/bunkerweb ...)
-  everywhere and Windows resolves them against the current drive.
+  Assembles the BunkerWeb for Windows file tree. The tree mirrors the installation root C:\bunkerweb\
+  (<Out> corresponds to C:\bunkerweb). BunkerWeb uses absolute POSIX paths, which the build rewrites to
+  /bunkerweb/usr/share/bunkerweb, /bunkerweb/etc/bunkerweb, /bunkerweb/var/lib/bunkerweb ... and Windows
+  resolves them against the current drive.
 
 .DESCRIPTION
   <Out>\usr\share\bunkerweb\   BunkerWeb itself (same layout as the Linux packages) + python\ + windows\ + service\

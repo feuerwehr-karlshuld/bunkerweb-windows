@@ -7,7 +7,7 @@ struct_passwd = namedtuple("struct_passwd", "pw_name pw_passwd pw_uid pw_gid pw_
 
 
 def _entry(name="nginx", uid=1):
-    return struct_passwd(str(name), "x", int(uid) if str(uid).isdigit() else 1, 1, str(name), os.environ.get("USERPROFILE", "C:\\"), "C:\\usr\\bin\\sh.exe")
+    return struct_passwd(str(name), "x", int(uid) if str(uid).isdigit() else 1, 1, str(name), os.environ.get("USERPROFILE", "C:\\bunkerweb"), "C:\\bunkerweb\\usr\\bin\\sh.exe")
 
 
 def getpwnam(name):

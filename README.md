@@ -42,8 +42,9 @@ as services.
 
 1. [`bunkerweb/`](bunkerweb) is the upstream repository as a git submodule, pinned to a release tag. **It is never modified.**
 2. On every CI build the sources are copied and a **Windows port** is applied to the copy: anchored text replacements, a few
-   shim layers (Lua and Python) and a Windows service runner. The Linux layout is mirrored on drive `C:`
-   (`C:\etc\bunkerweb`, `C:\usr\share\bunkerweb`, ...), so BunkerWeb's own code keeps working with its absolute paths.
+   shim layers (Lua and Python) and a Windows service runner. The Linux layout is mirrored below a single root, `C:\bunkerweb\`
+   (`C:\bunkerweb\etc\bunkerweb`, `C:\bunkerweb\usr\share\bunkerweb`, ...); BunkerWeb's absolute paths are rewritten at build time
+   to point there. Nothing is installed anywhere else on the drive.
 3. The native parts (nginx with all modules linked in statically, ModSecurity, LuaJIT, Lua C modules) are compiled for Windows.
    The Python parts run on a bundled CPython.
 4. [GitHub Actions](.github/workflows/bunkerweb-windows.yml) assembles an Inno Setup installer, **installs it on a clean runner,
@@ -150,20 +151,24 @@ Ports:
 > Local backends must **not** use the ports 5000, 6000, 7000 or 8888 (or 80/443). If one does, move the backend, or change
 > `API_HTTP_PORT` (variables.env) or `LISTEN_PORT` (ui.env).
 
-The file layout mirrors Linux on drive `C:`. BunkerWeb uses absolute paths such as `/etc/bunkerweb` everywhere; on Windows those
-resolve to `C:\etc\bunkerweb`.
+Everything lives below one root folder, `C:\bunkerweb\`, which mirrors the Linux layout. BunkerWeb's own absolute paths such as
+`/etc/bunkerweb` are rewritten at build time to `/bunkerweb/etc/bunkerweb`, which Windows resolves to `C:\bunkerweb\etc\bunkerweb`.
+
+> **Paths you write yourself** (in `variables.env`, custom configs, plugins, scripts) must use `C:/bunkerweb/...` or
+> `/bunkerweb/...`. A plain `/etc/...` or `/var/...` would point to `C:\etc` or `C:\var`, which BunkerWeb does not use.
+> Only BunkerWeb's built-in defaults are rewritten.
 
 | Path | Content | On upgrade / uninstall |
 |---|---|---|
-| `C:\usr\share\bunkerweb\` | Program files, bundled Python | Replaced / removed |
-| `C:\usr\sbin\`, `C:\usr\bin\` | `nginx.exe` + DLLs; tools: `bwctl`, `bwcli`, `openssl`, `sqlite3`, busybox `sh` | Replaced / removed |
-| `C:\etc\bunkerweb\` | **Configuration**: `variables.env`, `ui.env`, `scheduler.env`, `api.env`, `configs\`, `plugins\` | **Kept** |
-| `C:\etc\nginx\` | Generated nginx configuration (do not edit; it is regenerated) | Kept |
-| `C:\var\lib\bunkerweb\` | **Database** `db.sqlite3`, UI secrets, backups | **Kept** |
-| `C:\var\cache\bunkerweb\` | Job cache, **Let's Encrypt account and certificates** | **Kept** |
-| `C:\var\log\bunkerweb\` | `access.log`, `error.log`, `scheduler.log`, `ui.log`, `letsencrypt\`, `service\` | Kept |
+| `C:\bunkerweb\usr\share\bunkerweb\` | Program files, bundled Python | Replaced / removed |
+| `C:\bunkerweb\usr\sbin\`, `C:\bunkerweb\usr\bin\` | `nginx.exe` + DLLs; tools: `bwctl`, `bwcli`, `openssl`, `sqlite3`, busybox `sh` | Replaced / removed |
+| `C:\bunkerweb\etc\bunkerweb\` | **Configuration**: `variables.env`, `ui.env`, `scheduler.env`, `api.env`, `configs\`, `plugins\` | **Kept** |
+| `C:\bunkerweb\etc\nginx\` | Generated nginx configuration (do not edit; it is regenerated) | Kept |
+| `C:\bunkerweb\var\lib\bunkerweb\` | **Database** `db.sqlite3`, UI secrets, backups | **Kept** |
+| `C:\bunkerweb\var\cache\bunkerweb\` | Job cache, **Let's Encrypt account and certificates** | **Kept** |
+| `C:\bunkerweb\var\log\bunkerweb\` | `access.log`, `error.log`, `scheduler.log`, `ui.log`, `letsencrypt\`, `service\` | Kept |
 
-`C:\etc\bunkerweb` and `C:\var\lib\bunkerweb` are restricted to *Administrators* and *SYSTEM* (they contain secrets).
+`C:\bunkerweb\etc\bunkerweb` and `C:\bunkerweb\var\lib\bunkerweb` are restricted to *Administrators* and *SYSTEM* (they contain secrets).
 Edit files there from an **elevated** PowerShell or editor.
 
 ---
@@ -172,7 +177,7 @@ Edit files there from an **elevated** PowerShell or editor.
 
 ### 2.1 Requirements
 
-- Windows Server 2019 (build 17763) or newer, x64, with the `C:` drive. The installation paths are fixed.
+- Windows Server 2019 (build 17763) or newer, x64, with the `C:` drive. The installation path (`C:\bunkerweb`) is fixed.
 - 2 vCPU, 4 GB RAM and 5 GB of free disk space are comfortable for a few dozen sites.
 - Administrator rights.
 - A static LAN IP for the server.
@@ -298,7 +303,7 @@ Run the setup as Administrator. The wizard offers three tasks, all selected by d
 | Enable the web UI service | Sets `bunkerweb-ui` to Automatic. Without it the UI service is Disabled |
 | Allow inbound HTTP/HTTPS in Windows Firewall | Creates the rule group **BunkerWeb** (TCP 80, 443, all profiles) |
 
-The installer also adds `C:\usr\bin` to the system `PATH`, so `bwctl` and `bwcli` work in **new** shells.
+The installer also adds `C:\bunkerweb\usr\bin` to the system `PATH`, so `bwctl` and `bwcli` work in **new** shells.
 
 ### 5.2 Silent / scripted
 
@@ -308,7 +313,7 @@ The installer also adds `C:\usr\bin` to the system `PATH`, so `bwctl` and `bwcli
 
 Leave a task out of `/TASKS` to skip it, e.g. `/TASKS="startservices,firewall"` installs without the web UI.
 
-> Tip: you can create `C:\etc\bunkerweb\variables.env` **before** running the installer (section 6). BunkerWeb then starts
+> Tip: you can create `C:\bunkerweb\etc\bunkerweb\variables.env` **before** running the installer (section 6). BunkerWeb then starts
 > directly with your configuration instead of the loading page. The CI smoke test installs this way.
 
 ### 5.3 First start and checks
@@ -331,7 +336,7 @@ internal api           ok
 - `nginx health: loading` together with the note `IS_LOADING=yes` means the configuration hasn't been applied yet. This
   is normal on a fresh install without a pre-seeded `variables.env`. BunkerWeb shows a "loading" page until you apply
   your own configuration (section 6).
-- On first start the installer creates default `variables.env`, `scheduler.env` and `ui.env` files in `C:\etc\bunkerweb\`
+- On first start the installer creates default `variables.env`, `scheduler.env` and `ui.env` files in `C:\bunkerweb\etc\bunkerweb\`
   if they don't exist yet.
 
 ---
@@ -343,7 +348,7 @@ internal api           ok
 - A git repository holds `variables.env` (global settings and all services) and `configs\` (optional nginx/ModSecurity snippets).
   This is the operator's **own configuration repository**, separate from this one: it contains real hostnames and
   backends, so it normally stays private.
-- `Apply-BunkerWebConfig.ps1` (6.6) checks the files, backs up the current state, copies them to `C:\etc\bunkerweb\` and runs
+- `Apply-BunkerWebConfig.ps1` (6.6) checks the files, backs up the current state, copies them to `C:\bunkerweb\etc\bunkerweb\` and runs
   `bwctl reload-scheduler`. This is the Windows equivalent of `systemctl reload bunkerweb-scheduler`.
 - The scheduler regenerates the nginx configuration, requests missing certificates and reloads nginx without dropping
   connections.
@@ -382,7 +387,7 @@ bunkerweb-config/
 *.ps1 text eol=crlf
 ```
 
-> Never commit secrets (`ADMIN_PASSWORD`, API tokens) to `variables.env`. Credentials for the UI belong in `C:\etc\bunkerweb\ui.env`,
+> Never commit secrets (`ADMIN_PASSWORD`, API tokens) to `variables.env`. Credentials for the UI belong in `C:\bunkerweb\etc\bunkerweb\ui.env`,
 > which is not part of the repository (section 9.1).
 
 ### 6.3 `variables.env`
@@ -497,7 +502,7 @@ works the same way here.
 
 ### 6.4 Custom configuration snippets
 
-Path in the repository: `configs\<type>\[<service-id>\]<name>.conf`. These files are copied to `C:\etc\bunkerweb\configs\...`.
+Path in the repository: `configs\<type>\[<service-id>\]<name>.conf`. These files are copied to `C:\bunkerweb\etc\bunkerweb\configs\...`.
 
 | Type | Inserted into |
 |---|---|
@@ -515,7 +520,8 @@ Example: remove a ModSecurity rule that gives a false positive for one service (
 SecRuleRemoveById 942100
 ```
 
-Paths inside snippets use forward slashes and the Linux-style layout (`/var/www/...`). They resolve on `C:`.
+Paths inside snippets use forward slashes and must start with `C:/bunkerweb/...` (for example `C:/bunkerweb/var/www/...`). A path
+starting with a bare `/var/...` would resolve to `C:\var`, which BunkerWeb does not use.
 
 ### 6.5 What needs a reload and what needs a restart
 
@@ -523,8 +529,8 @@ Paths inside snippets use forward slashes and the Linux-style layout (`/var/www/
 |---|---|
 | Services, Let's Encrypt, security settings, snippets in `configs\` | `bwctl reload-scheduler` (no downtime) |
 | `HTTP_PORT`, `HTTPS_PORT`, `API_*`, `USE_REAL_IP`/`USE_PROXY_PROTOCOL` (global listen settings) | `bwctl restart` |
-| `C:\etc\bunkerweb\scheduler.env` | `Restart-Service bunkerweb-scheduler` |
-| `C:\etc\bunkerweb\ui.env` | `Restart-Service bunkerweb-ui` |
+| `C:\bunkerweb\etc\bunkerweb\scheduler.env` | `Restart-Service bunkerweb-scheduler` |
+| `C:\bunkerweb\etc\bunkerweb\ui.env` | `Restart-Service bunkerweb-ui` |
 
 ### 6.6 `Apply-BunkerWebConfig.ps1` (runs on the server)
 
@@ -533,7 +539,7 @@ Paths inside snippets use forward slashes and the Linux-style layout (`/var/www/
 <#
 .SYNOPSIS
   Checks variables.env and configs\ from this repository, backs up the active configuration,
-  installs the new one into C:\etc\bunkerweb and asks BunkerWeb to apply it.
+  installs the new one into C:\bunkerweb\etc\bunkerweb and asks BunkerWeb to apply it.
 .EXAMPLE
   .\Apply-BunkerWebConfig.ps1              # reload (no downtime)
   .\Apply-BunkerWebConfig.ps1 -Restart     # after port / listen changes
@@ -545,10 +551,10 @@ param(
     [switch] $CheckOnly
 )
 $ErrorActionPreference = 'Stop'
-$Etc     = 'C:\etc\bunkerweb'
-$History = 'C:\var\lib\bunkerweb\config-history'
+$Etc     = 'C:\bunkerweb\etc\bunkerweb'
+$History = 'C:\bunkerweb\var\lib\bunkerweb\config-history'
 $Keep    = 30
-$Bwctl   = 'C:\usr\bin\bwctl.cmd'
+$Bwctl   = 'C:\bunkerweb\usr\bin\bwctl.cmd'
 
 # ---- read and normalise (no BOM, LF only)
 $varsPath = Join-Path $Source 'variables.env'
@@ -600,8 +606,8 @@ Start-Sleep -Seconds 20
 & $Bwctl logs scheduler -n 25
 ```
 
-**Rollback:** `git revert` and apply again. In an emergency, copy a folder from `C:\var\lib\bunkerweb\config-history\<timestamp>\` back
-to `C:\etc\bunkerweb\` and run `bwctl reload-scheduler`.
+**Rollback:** `git revert` and apply again. In an emergency, copy a folder from `C:\bunkerweb\var\lib\bunkerweb\config-history\<timestamp>\` back
+to `C:\bunkerweb\etc\bunkerweb\` and run `bwctl reload-scheduler`.
 
 ### 6.7 Getting the repository onto the server
 
@@ -623,7 +629,7 @@ Save this as `Deploy-BunkerWebConfig.ps1`:
 ```powershell
 param([string] $Server = 'bw01.lan.example.de')
 $ErrorActionPreference = 'Stop'
-$stage = 'C:\var\lib\bunkerweb\config-stage'   # ACL-protected like the configuration itself
+$stage = 'C:\bunkerweb\var\lib\bunkerweb\config-stage'   # ACL-protected like the configuration itself
 $s = New-PSSession -ComputerName $Server
 try {
     Invoke-Command $s { param($p) Remove-Item -Recurse -Force $p -ErrorAction SilentlyContinue; New-Item -ItemType Directory $p | Out-Null } -ArgumentList $stage
@@ -715,8 +721,8 @@ BunkerWeb sends these headers to the backend by default:
   worldwide. BunkerWeb answers that path for all services before any HTTP→HTTPS redirect.
 - Once a certificate exists, HTTP is redirected to HTTPS automatically (`AUTO_REDIRECT_HTTP_TO_HTTPS=yes` by default).
 - Paths:
-  - certificates: `C:\var\cache\bunkerweb\letsencrypt\etc\live\<service>\` (also stored in the database);
-  - logs: `C:\var\log\bunkerweb\letsencrypt\` plus `scheduler.log`.
+  - certificates: `C:\bunkerweb\var\cache\bunkerweb\letsencrypt\etc\live\<service>\` (also stored in the database);
+  - logs: `C:\bunkerweb\var\log\bunkerweb\letsencrypt\` plus `scheduler.log`.
 - Until a certificate exists, BunkerWeb serves a self-signed fallback certificate, so browsers show a warning.
 
 ### 8.2 One-time network preparation
@@ -751,8 +757,8 @@ For every new hostname:
 
    ```powershell
    bwctl logs scheduler -n 80
-   Get-ChildItem C:\var\cache\bunkerweb\letsencrypt\etc\live\
-   Get-ChildItem C:\var\log\bunkerweb\letsencrypt\ | Sort-Object LastWriteTime | Select-Object -Last 1 | Get-Content -Tail 50
+   Get-ChildItem C:\bunkerweb\var\cache\bunkerweb\letsencrypt\etc\live\
+   Get-ChildItem C:\bunkerweb\var\log\bunkerweb\letsencrypt\ | Sort-Object LastWriteTime | Select-Object -Last 1 | Get-Content -Tail 50
    ```
 
 6. **Check the certificate that is served.** Save this helper, e.g. in your PowerShell profile or the config repository:
@@ -810,7 +816,7 @@ into the *Application* event log when a certificate expires within 14 days or is
 ```powershell
 param([int] $Days = 14)
 $ErrorActionPreference = 'Stop'
-$names = (Get-Content C:\etc\bunkerweb\variables.env | Where-Object { $_ -match '^SERVER_NAME=' }) -replace '^SERVER_NAME=', '' -split '\s+' | Where-Object { $_ }
+$names = (Get-Content C:\bunkerweb\etc\bunkerweb\variables.env | Where-Object { $_ -match '^SERVER_NAME=' }) -replace '^SERVER_NAME=', '' -split '\s+' | Where-Object { $_ }
 $problems = @()
 foreach ($name in $names) {
     $tcp = $null
@@ -859,7 +865,7 @@ before expiry. Check port 80, DNS and the Let's Encrypt logs.
 The UI service listens on `127.0.0.1:7000`. There are two ways to create the first admin:
 
 - **Wizard:** open the UI (9.2) and follow the setup wizard.
-- **Configuration file (recommended):** edit `C:\etc\bunkerweb\ui.env` in an elevated editor and restart the UI:
+- **Configuration file (recommended):** edit `C:\bunkerweb\etc\bunkerweb\ui.env` in an elevated editor and restart the UI:
 
   ```ini
   ADMIN_USERNAME=admin
@@ -878,7 +884,7 @@ The UI service listens on `127.0.0.1:7000`. There are two ways to create the fir
   Restart-Service bunkerweb-ui
   ```
 
-The UI generates its secrets on first start: `C:\var\lib\bunkerweb\.flask_secret` and `.totp_encryption_keys.json`.
+The UI generates its secrets on first start: `C:\bunkerweb\var\lib\bunkerweb\.flask_secret` and `.totp_encryption_keys.json`.
 Include them in backups. Without the TOTP keys, users with 2FA can't log in after a restore.
 
 **Enable TOTP (2FA)** for every UI account (*Profile* → *Security*).
@@ -999,13 +1005,13 @@ after a crash: 10 s, 30 s and 60 s back-off, and the failure counter resets afte
 
 | What | Where | Quick view |
 |---|---|---|
-| nginx access / error | `C:\var\log\bunkerweb\access.log`, `error.log` | `bwctl logs access`, `bwctl logs error -n 200` |
-| Scheduler (config generation, jobs) | `C:\var\log\bunkerweb\scheduler.log` | `bwctl logs scheduler` |
-| Web UI | `C:\var\log\bunkerweb\ui.log` | `bwctl logs ui` |
-| Let's Encrypt (certbot) | `C:\var\log\bunkerweb\letsencrypt\` | see 8.3 |
-| Service wrappers (start/stop, crashes) | `C:\var\log\bunkerweb\service\bunkerweb-<name>*.log` | `bwctl logs service-nginx`, `service-scheduler`, `service-ui` |
+| nginx access / error | `C:\bunkerweb\var\log\bunkerweb\access.log`, `error.log` | `bwctl logs access`, `bwctl logs error -n 200` |
+| Scheduler (config generation, jobs) | `C:\bunkerweb\var\log\bunkerweb\scheduler.log` | `bwctl logs scheduler` |
+| Web UI | `C:\bunkerweb\var\log\bunkerweb\ui.log` | `bwctl logs ui` |
+| Let's Encrypt (certbot) | `C:\bunkerweb\var\log\bunkerweb\letsencrypt\` | see 8.3 |
+| Service wrappers (start/stop, crashes) | `C:\bunkerweb\var\log\bunkerweb\service\bunkerweb-<name>*.log` | `bwctl logs service-nginx`, `service-scheduler`, `service-ui` |
 
-Live view: `Get-Content C:\var\log\bunkerweb\error.log -Wait -Tail 20`.
+Live view: `Get-Content C:\bunkerweb\var\log\bunkerweb\error.log -Wait -Tail 20`.
 
 The service wrapper logs rotate by size, and certbot rotates its own logs. **nginx and the Python services do not rotate
 their logs**: there is no logrotate on Windows. Rotate them with a scheduled task. `C:\Admin\Rotate-BunkerWebLogs.ps1` uses
@@ -1013,8 +1019,8 @@ copy-and-truncate, so the services keep running:
 
 ```powershell
 $ErrorActionPreference = 'Stop'
-$LogDir   = 'C:\var\log\bunkerweb'
-$Archive  = 'C:\var\log\bunkerweb\archive'
+$LogDir   = 'C:\bunkerweb\var\log\bunkerweb'
+$Archive  = 'C:\bunkerweb\var\log\bunkerweb\archive'
 $KeepDays = 30
 New-Item -ItemType Directory -Force $Archive | Out-Null
 $stamp = Get-Date -Format 'yyyyMMdd-HHmmss'
@@ -1050,8 +1056,8 @@ Back up three layers:
 
 1. **Configuration as code:** the git repository, pushed to a server.
 2. **BunkerWeb database** (settings, UI users, reports, certificate cache). The built-in backup plugin is on by default:
-   `USE_BACKUP=yes`, `BACKUP_SCHEDULE=daily`, `BACKUP_ROTATION=7`, `BACKUP_DIRECTORY=/var/lib/bunkerweb/backups`
-   (that is `C:\var\lib\bunkerweb\backups`). Manual commands:
+   `USE_BACKUP=yes`, `BACKUP_SCHEDULE=daily`, `BACKUP_ROTATION=7`, `BACKUP_DIRECTORY=/bunkerweb/var/lib/bunkerweb/backups`
+   (that is `C:\bunkerweb\var\lib\bunkerweb\backups`). Manual commands:
 
    ```powershell
    bwcli plugin backup save
@@ -1062,12 +1068,12 @@ Back up three layers:
 
    | Path | Why |
    |---|---|
-   | `C:\etc\bunkerweb\` | Live configuration, `ui.env` (admin credentials) |
-   | `C:\var\lib\bunkerweb\` | Database, DB backups, `.flask_secret`, `.totp_encryption_keys.json`, config history |
-   | `C:\var\cache\bunkerweb\letsencrypt\` | Let's Encrypt account and certificates; avoids re-issuing everything after a restore |
+   | `C:\bunkerweb\etc\bunkerweb\` | Live configuration, `ui.env` (admin credentials) |
+   | `C:\bunkerweb\var\lib\bunkerweb\` | Database, DB backups, `.flask_secret`, `.totp_encryption_keys.json`, config history |
+   | `C:\bunkerweb\var\cache\bunkerweb\letsencrypt\` | Let's Encrypt account and certificates; avoids re-issuing everything after a restore |
 
    A file-level copy of `db.sqlite3` taken while the scheduler is running may be inconsistent. Restore from the backup plugin's
-   dumps in `C:\var\lib\bunkerweb\backups\` instead, or stop `bunkerweb-ui` and `bunkerweb-scheduler` while copying.
+   dumps in `C:\bunkerweb\var\lib\bunkerweb\backups\` instead, or stop `bunkerweb-ui` and `bunkerweb-scheduler` while copying.
 
 ### 11.5 Upgrading BunkerWeb
 
@@ -1082,7 +1088,7 @@ and tag `v<version>-win<N>` (see [`windows/README.md`](windows/README.md)). Then
    Stop-Service bunkerweb-ui, bunkerweb-scheduler
    $d = "C:\Admin\pre-upgrade-$(Get-Date -Format yyyyMMdd)"
    New-Item -ItemType Directory $d | Out-Null
-   Copy-Item -Recurse C:\etc\bunkerweb, C:\var\lib\bunkerweb $d
+   Copy-Item -Recurse C:\bunkerweb\etc\bunkerweb, C:\bunkerweb\var\lib\bunkerweb $d
    ```
 
    If the server is a VM, take a snapshot too.
@@ -1091,7 +1097,7 @@ and tag `v<version>-win<N>` (see [`windows/README.md`](windows/README.md)). Then
    schema on its first start.
 4. Check `bwctl status`, every site, and `Get-ServedCertificate` for each hostname.
 
-**Rollback:** run the previous installer and restore `C:\var\lib\bunkerweb\db.sqlite3` from step 2. Database migrations
+**Rollback:** run the previous installer and restore `C:\bunkerweb\var\lib\bunkerweb\db.sqlite3` from step 2. Database migrations
 are one-way.
 
 ### 11.6 Uninstalling
@@ -1099,7 +1105,7 @@ are one-way.
 *Settings → Apps → BunkerWeb for Windows → Uninstall* (or `C:\ProgramData\BunkerWeb\uninstall\unins000.exe`). The uninstaller:
 
 - removes the services, the program files, the firewall rule group and the `PATH` entry;
-- **keeps** `C:\etc\bunkerweb`, `C:\var\lib\bunkerweb`, `C:\var\cache\bunkerweb` and `C:\var\log\bunkerweb`. Delete them by hand
+- **keeps** `C:\bunkerweb\etc\bunkerweb`, `C:\bunkerweb\var\lib\bunkerweb`, `C:\bunkerweb\var\cache\bunkerweb` and `C:\bunkerweb\var\log\bunkerweb`. Delete them by hand
   if you really want to remove everything.
 
 ---
@@ -1160,7 +1166,7 @@ The internal ports can collide too: some ranges are reserved by Hyper-V/WinNAT
 | Values look odd / settings ignored | Quotes, spaces or BOM in `variables.env` | Run the apply script; it rejects and normalises such lines |
 | Setting locked in the UI | Service owned by `variables.env` | Edit it in git (6.1) |
 | Locked out of the UI | Password unknown or TOTP keys lost | Set `ADMIN_PASSWORD` + `OVERRIDE_ADMIN_CREDS=yes` in `ui.env`, restart the UI, then remove the override; restore `.totp_encryption_keys.json` |
-| High CPU in `MsMpEng.exe` under load | Defender scanning temp files of nginx | Optionally exclude `C:\var\tmp\bunkerweb` and `C:\var\cache\bunkerweb` (`Add-MpPreference -ExclusionPath ...`). Weigh the security trade-off |
+| High CPU in `MsMpEng.exe` under load | Defender scanning temp files of nginx | Optionally exclude `C:\bunkerweb\var\tmp\bunkerweb` and `C:\bunkerweb\var\cache\bunkerweb` (`Add-MpPreference -ExclusionPath ...`). Weigh the security trade-off |
 
 ### 12.4 Collecting information for a bug report (Windows port)
 
@@ -1168,8 +1174,8 @@ The internal ports can collide too: some ranges are reserved by Hyper-V/WinNAT
 $d = "C:\Admin\bw-diag-$(Get-Date -Format yyyyMMdd-HHmmss)"
 New-Item -ItemType Directory $d | Out-Null
 bwctl status > "$d\status.txt"
-Copy-Item -Recurse C:\var\log\bunkerweb, C:\etc\nginx $d
-Copy-Item C:\usr\share\bunkerweb\windows\BUILDINFO $d
+Copy-Item -Recurse C:\bunkerweb\var\log\bunkerweb, C:\bunkerweb\etc\nginx $d
+Copy-Item C:\bunkerweb\usr\share\bunkerweb\windows\BUILDINFO $d
 Compress-Archive $d "$d.zip"
 ```
 
@@ -1184,7 +1190,7 @@ not at bunkerity/bunkerweb.
 |---|---|
 | One nginx worker, `select()` event model (nginx for Windows) | Fine for typical on-premise traffic; not for high-traffic sites. Keep `WORKER_PROCESSES=1` and the default `WORKER_CONNECTIONS` |
 | No HTTP/3 (QUIC), no `reuseport` | Leave `HTTP3=no` |
-| Paths fixed to drive `C:` | The installer can't relocate BunkerWeb |
+| Paths fixed to `C:\bunkerweb` | The installer can't relocate BunkerWeb |
 | Lua libraries luasocket, luasec and `lua-resty-signal` are not included | Not used by BunkerWeb's core features. Third-party plugins that need them won't work |
 | External plugins that run Linux binaries or shell scripts | Only work if busybox provides the tool |
 | Some upstream features are untested on Windows (e.g. Redis clustering, CrowdSec bouncer, PRO plugins) | Test before use |
@@ -1212,7 +1218,7 @@ the installer was built from. Keep the repository public, or otherwise provide t
 - [ ] Split DNS in place if there is no hairpin NAT.
 - [ ] UI admin has a strong password and TOTP; UI not exposed (or option C with a secret path and TOTP).
 - [ ] Decision on `USE_BUNKERNET` / `SEND_ANONYMOUS_REPORT` documented.
-- [ ] Backups: git pushed, `USE_BACKUP=yes`, `C:\etc\bunkerweb`, `C:\var\lib\bunkerweb` and `C:\var\cache\bunkerweb\letsencrypt` in the server backup.
+- [ ] Backups: git pushed, `USE_BACKUP=yes`, `C:\bunkerweb\etc\bunkerweb`, `C:\bunkerweb\var\lib\bunkerweb` and `C:\bunkerweb\var\cache\bunkerweb\letsencrypt` in the server backup.
 - [ ] Scheduled tasks: certificate check (8.5) and log rotation (11.2).
 - [ ] This document updated with your real values.
 

@@ -2,10 +2,11 @@
 
 Each Windows service (installed with WinSW) runs:
 
-    C:\\usr\\share\\bunkerweb\\python\\python.exe C:\\usr\\share\\bunkerweb\\windows\\bwsvc.py <component>
+    C:\\bunkerweb\\usr\\share\\bunkerweb\\python\\python.exe C:\\bunkerweb\\usr\\share\\bunkerweb\\windows\\bwsvc.py <component>
 
-with the working directory C:\\ so that every POSIX style absolute path used by BunkerWeb
-("/etc/bunkerweb/...", "/var/lib/bunkerweb/...") resolves to the C: drive.
+with the working directory C:\\bunkerweb. Everything lives below that single root folder. The build rewrites
+every POSIX style absolute path of BunkerWeb ("/etc/bunkerweb/...") to "/bunkerweb/etc/bunkerweb/...", which
+Windows resolves against the root of the current drive (C:), i.e. to C:\\bunkerweb\\etc\\bunkerweb\\...
 
 Components (ports of the Linux scripts in src/linux/scripts/):
     nginx      -> start.sh               (temporary config, nginx master, health wait)
@@ -27,16 +28,17 @@ from ctypes import wintypes
 from datetime import datetime
 from pathlib import Path
 
-BW = Path("/usr/share/bunkerweb")
+BW = Path("/bunkerweb/usr/share/bunkerweb")
 DEPS = BW / "deps" / "python"
-ETC = Path("/etc/bunkerweb")
-NGINX_ETC = Path("/etc/nginx")
-RUN_DIR = Path("/var/run/bunkerweb")
-TMP_DIR = Path("/var/tmp/bunkerweb")
-LOG_DIR = Path("/var/log/bunkerweb")
-LIB_DIR = Path("/var/lib/bunkerweb")
-CACHE_DIR = Path("/var/cache/bunkerweb")
-NGINX_EXE = r"C:\usr\sbin\nginx.exe"
+ETC = Path("/bunkerweb/etc/bunkerweb")
+NGINX_ETC = Path("/bunkerweb/etc/nginx")
+RUN_DIR = Path("/bunkerweb/var/run/bunkerweb")
+TMP_DIR = Path("/bunkerweb/var/tmp/bunkerweb")
+LOG_DIR = Path("/bunkerweb/var/log/bunkerweb")
+LIB_DIR = Path("/bunkerweb/var/lib/bunkerweb")
+CACHE_DIR = Path("/bunkerweb/var/cache/bunkerweb")
+ROOT_DIR = "C:\\bunkerweb"
+NGINX_EXE = ROOT_DIR + "\\usr\\sbin\\nginx.exe"
 PYTHON = sys.executable
 
 SCHEDULER_RELOAD_EVENT = "Global\\bunkerweb_scheduler_reload"
@@ -59,7 +61,7 @@ UI_HOST=http://127.0.0.1:7000
 
 SCHEDULER_ENV_DEFAULT = """LOG_LEVEL=info
 LOG_TYPES=file
-# LOG_FILE_PATH=/var/log/bunkerweb/scheduler.log
+# LOG_FILE_PATH=/bunkerweb/var/log/bunkerweb/scheduler.log
 # in seconds
 HEALTHCHECK_INTERVAL=30
 
@@ -81,7 +83,7 @@ PROXY_ALLOW_IPS=127.0.0.1,::1
 # UI_USE_REDIS=yes
 LOG_LEVEL=info
 LOG_TYPES=file
-# LOG_FILE_PATH=/var/log/bunkerweb/ui.log
+# LOG_FILE_PATH=/bunkerweb/var/log/bunkerweb/ui.log
 """
 
 API_ENV_DEFAULT = """# API_USERNAME=
@@ -92,7 +94,7 @@ LISTEN_PORT=8888
 WHITELIST_IPS=127.0.0.1
 LOG_LEVEL=info
 LOG_TYPES=file
-# LOG_FILE_PATH=/var/log/bunkerweb/api.log
+# LOG_FILE_PATH=/bunkerweb/var/log/bunkerweb/api.log
 """
 
 TMP_ENV_DEFAULTS = {
@@ -149,9 +151,9 @@ def ensure_dirs() -> None:
         ETC,
         ETC / "plugins",
         ETC / "pro" / "plugins",
-        Path("/tmp/bunkerweb/ui-workers"),
-        Path("/tmp/bunkerweb/api-workers"),
-        Path("/var/www/html"),
+        Path("/bunkerweb/tmp/bunkerweb/ui-workers"),
+        Path("/bunkerweb/tmp/bunkerweb/api-workers"),
+        Path("/bunkerweb/var/www/html"),
     ):
         path.mkdir(parents=True, exist_ok=True)
     for sub in (
@@ -346,7 +348,7 @@ def component_nginx() -> int:
 
     tmp_env = TMP_DIR / "tmp.env"
     sentinel = NGINX_ETC / ".bw-install-incomplete"
-    needs_config = Path("/var/tmp/bunkerweb_needs_config")
+    needs_config = Path("/bunkerweb/var/tmp/bunkerweb_needs_config")
     regenerate = values["KEEP_CONFIG_ON_RESTART"] == "no" or not tmp_env.is_file()
     if not regenerate:
         if sentinel.exists():
@@ -361,12 +363,12 @@ def component_nginx() -> int:
     tmp_env.write_text("\n".join(lines) + "\n", encoding="utf-8")
 
     (TMP_DIR / "reloading").unlink(missing_ok=True)
-    Path("/var/tmp/bunkerweb_reloading").unlink(missing_ok=True)
+    Path("/bunkerweb/var/tmp/bunkerweb_reloading").unlink(missing_ok=True)
 
     env = base_env()
     if regenerate:
         needs_config.unlink(missing_ok=True)
-        if run_python(c, [BW / "gen" / "main.py", "--variables", tmp_env.as_posix()], env, cwd="C:\\") != 0:
+        if run_python(c, [BW / "gen" / "main.py", "--variables", tmp_env.as_posix()], env, cwd=ROOT_DIR) != 0:
             log(c, f"Error while generating config from {tmp_env.as_posix()}")
             return 1
         sentinel.unlink(missing_ok=True)
@@ -383,14 +385,14 @@ def component_nginx() -> int:
                 except OSError:
                     pass
 
-    if run_python(c, [BW / "utils" / "modsecurity_audit.py", "/etc/nginx/variables.env"], env, cwd="C:\\") != 0:
+    if run_python(c, [BW / "utils" / "modsecurity_audit.py", "/bunkerweb/etc/nginx/variables.env"], env, cwd=ROOT_DIR) != 0:
         log(c, "Invalid ModSecurity audit storage, refusing to start nginx")
         return 1
 
     log(c, "Starting nginx ...")
     proc = subprocess.Popen(
-        [NGINX_EXE, "-e", "/var/log/bunkerweb/error.log"],
-        cwd="C:\\",
+        [NGINX_EXE, "-e", "/bunkerweb/var/log/bunkerweb/error.log"],
+        cwd=ROOT_DIR,
         env=env,
         stdin=subprocess.DEVNULL,
         creationflags=subprocess.CREATE_NEW_PROCESS_GROUP,
@@ -434,7 +436,7 @@ def scheduler_env() -> dict:
     env.setdefault("LOG_LEVEL", "INFO")
     env.setdefault("CUSTOM_LOG_LEVEL", env["LOG_LEVEL"])
     env["LOG_TYPES"] = env.get("SCHEDULER_LOG_TYPES") or env.get("LOG_TYPES") or "file"
-    env["LOG_FILE_PATH"] = env.get("SCHEDULER_LOG_FILE_PATH") or env.get("LOG_FILE_PATH") or "/var/log/bunkerweb/scheduler.log"
+    env["LOG_FILE_PATH"] = env.get("SCHEDULER_LOG_FILE_PATH") or env.get("LOG_FILE_PATH") or "/bunkerweb/var/log/bunkerweb/scheduler.log"
     env["LOG_SYSLOG_TAG"] = env.get("SCHEDULER_LOG_SYSLOG_TAG") or env.get("LOG_SYSLOG_TAG") or "bw-scheduler"
     for key, default in (
         ("LOG_SYSLOG_ADDRESS", ""),
@@ -443,7 +445,7 @@ def scheduler_env() -> dict:
         ("DISABLE_CONFIGURATION_TESTING", "no"),
         ("IGNORE_FAIL_SENDING_CONFIG", "no"),
         ("IGNORE_REGEX_CHECK", "no"),
-        ("DATABASE_URI", "sqlite:////var/lib/bunkerweb/db.sqlite3"),
+        ("DATABASE_URI", "sqlite:////bunkerweb/var/lib/bunkerweb/db.sqlite3"),
         ("DATABASE_RETRY_TIMEOUT", "60"),
         ("DATABASE_LOG_LEVEL", "WARNING"),
     ):
@@ -470,7 +472,7 @@ try:
         else:
             print("BWVERSION=" + INSTALLED)
 except BaseException:
-    with open("/var/tmp/bunkerweb/database_error", "w", encoding="utf-8") as file:
+    with open("/bunkerweb/var/tmp/bunkerweb/database_error", "w", encoding="utf-8") as file:
         file.write(format_exc())
     print("BWVERSION=none")
 if db:
@@ -496,7 +498,7 @@ def migrate_database(c: str, env: dict) -> bool:
     proc = subprocess.run(
         [PYTHON, "-c", f"INSTALLED = {installed!r}\n" + DB_VERSION_SCRIPT],
         env=env,
-        cwd="C:\\",
+        cwd=ROOT_DIR,
         stdin=subprocess.DEVNULL,
         stdout=subprocess.PIPE,
         text=True,
@@ -521,7 +523,7 @@ def migrate_database(c: str, env: dict) -> bool:
 
     alembic_dir = BW / "db" / "alembic"
     if current in ("dev", "testing"):
-        code = subprocess.run([PYTHON, "-c", f"INSTALLED = {installed!r}\n" + DB_UPDATE_SCRIPT], env=env, cwd="C:\\").returncode
+        code = subprocess.run([PYTHON, "-c", f"INSTALLED = {installed!r}\n" + DB_UPDATE_SCRIPT], env=env, cwd=ROOT_DIR).returncode
         return code == 0
 
     database = env["DATABASE_URI"].split(":", 1)[0].split("+", 1)[0]
@@ -583,10 +585,10 @@ def component_scheduler() -> int:
         log(c, f"Could not create the reload event (error {ctypes.get_last_error()}), bwctl reload-scheduler unavailable")
 
     apply_env(env)
-    os.chdir("C:\\")
+    os.chdir(ROOT_DIR)
     scheduler_dir = BW / "scheduler"
     sys.path.insert(0, str(scheduler_dir))
-    sys.argv = [str(scheduler_dir / "main.py"), "--variables", "/etc/bunkerweb/variables.env"]
+    sys.argv = [str(scheduler_dir / "main.py"), "--variables", "/bunkerweb/etc/bunkerweb/variables.env"]
     log(c, "Executing scheduler ...")
     import runpy
 
@@ -610,7 +612,7 @@ def ui_env() -> dict:
     env["FORWARDED_ALLOW_IPS"] = get("UI_FORWARDED_ALLOW_IPS", "") or get("FORWARDED_ALLOW_IPS", "127.0.0.1,::1")
     env["PROXY_ALLOW_IPS"] = get("UI_PROXY_ALLOW_IPS", "") or get("PROXY_ALLOW_IPS", env["FORWARDED_ALLOW_IPS"])
     env["LOG_TYPES"] = get("UI_LOG_TYPES", "") or get("LOG_TYPES", "file")
-    env["LOG_FILE_PATH"] = get("UI_LOG_FILE_PATH", "") or get("LOG_FILE_PATH", "/var/log/bunkerweb/ui.log")
+    env["LOG_FILE_PATH"] = get("UI_LOG_FILE_PATH", "") or get("LOG_FILE_PATH", "/bunkerweb/var/log/bunkerweb/ui.log")
     env["LOG_SYSLOG_TAG"] = get("UI_LOG_SYSLOG_TAG", "") or get("LOG_SYSLOG_TAG", "bw-ui")
     env["CAPTURE_OUTPUT"] = "yes"
     env.update(parse_env_file(ETC / "variables.env", identifiers_only=True))
@@ -623,7 +625,7 @@ def supervise(c: str, child_component: str, env: dict) -> int:
     kill_children_with_me()
     install_stop_handlers(c)
     while not STOP.is_set():
-        proc = subprocess.Popen([PYTHON, __file__, child_component], env=env, cwd="C:\\", stdin=subprocess.DEVNULL)
+        proc = subprocess.Popen([PYTHON, __file__, child_component], env=env, cwd=ROOT_DIR, stdin=subprocess.DEVNULL)
         while proc.poll() is None and not STOP.is_set():
             time.sleep(0.5)
         if STOP.is_set():
@@ -719,7 +721,7 @@ def api_env() -> dict:
     env.update(parse_env_file(ETC / "variables.env", identifiers_only=True))
     env.update(parse_env_file(ETC / "api.env", identifiers_only=True))
     env.setdefault("LOG_TYPES", "file")
-    env.setdefault("LOG_FILE_PATH", "/var/log/bunkerweb/api.log")
+    env.setdefault("LOG_FILE_PATH", "/bunkerweb/var/log/bunkerweb/api.log")
     env["CAPTURE_OUTPUT"] = "yes"
     return env
 
@@ -785,5 +787,5 @@ if __name__ == "__main__":
     if len(sys.argv) != 2 or sys.argv[1] not in COMPONENTS:
         print(f"usage: bwsvc.py <{'|'.join(COMPONENTS)}>", file=sys.stderr)
         sys.exit(2)
-    os.chdir("C:\\")
+    os.chdir(ROOT_DIR)
     sys.exit(COMPONENTS[sys.argv[1]]())

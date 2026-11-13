@@ -25,7 +25,7 @@ if sys.platform == "win32":
     import subprocess
     from ctypes import wintypes
 
-    _BUSYBOX = os.environ.get("BW_BUSYBOX", r"C:\usr\bin\busybox.exe")
+    _BUSYBOX = os.environ.get("BW_BUSYBOX", r"C:\bunkerweb\usr\bin\busybox.exe")
     _added = []
 
     def _add(name, value):

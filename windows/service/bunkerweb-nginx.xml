@@ -3,13 +3,13 @@
   <id>bunkerweb-nginx</id>
   <name>BunkerWeb (nginx)</name>
   <description>BunkerWeb reverse proxy / WAF - nginx master process</description>
-  <executable>C:\usr\share\bunkerweb\python\python.exe</executable>
-  <arguments>C:\usr\share\bunkerweb\windows\bwsvc.py nginx</arguments>
-  <workingdirectory>C:\</workingdirectory>
-  <env name="PATH" value="C:\usr\sbin;C:\usr\bin;C:\usr\share\bunkerweb\python;C:\usr\share\bunkerweb\python\Scripts;%PATH%" />
-  <env name="PYTHONPATH" value="C:\usr\share\bunkerweb\deps\python" />
-  <env name="OPENSSL_CONF" value="C:\usr\ssl\openssl.cnf" />
-  <env name="MAGIC" value="C:\usr\share\misc\magic.mgc" />
+  <executable>C:\bunkerweb\usr\share\bunkerweb\python\python.exe</executable>
+  <arguments>C:\bunkerweb\usr\share\bunkerweb\windows\bwsvc.py nginx</arguments>
+  <workingdirectory>C:\bunkerweb</workingdirectory>
+  <env name="PATH" value="C:\bunkerweb\usr\sbin;C:\bunkerweb\usr\bin;C:\bunkerweb\usr\share\bunkerweb\python;C:\bunkerweb\usr\share\bunkerweb\python\Scripts;%PATH%" />
+  <env name="PYTHONPATH" value="C:\bunkerweb\usr\share\bunkerweb\deps\python" />
+  <env name="OPENSSL_CONF" value="C:\bunkerweb\usr\ssl\openssl.cnf" />
+  <env name="MAGIC" value="C:\bunkerweb\usr\share\misc\magic.mgc" />
   <env name="PYTHONUTF8" value="1" />
   <env name="PYTHONIOENCODING" value="utf-8" />
   <startmode>Automatic</startmode>
@@ -19,7 +19,7 @@
   <onfailure action="restart" delay="30 sec" />
   <onfailure action="restart" delay="60 sec" />
   <resetfailure>1 hour</resetfailure>
-  <logpath>C:\var\log\bunkerweb\service</logpath>
+  <logpath>C:\bunkerweb\var\log\bunkerweb\service</logpath>
   <log mode="roll-by-size">
     <sizeThreshold>10240</sizeThreshold>
     <keepFiles>5</keepFiles>

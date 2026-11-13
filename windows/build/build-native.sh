@@ -152,23 +152,24 @@ export LUAJIT_LIB="$LUAJIT_SRC"
 export MODSECURITY_INC="$D/modsecurity/headers"
 export MODSECURITY_LIB="$MODSEC_LIB"
 
-# Paths compiled into nginx.exe use the drive letter: nginx for Windows resolves "/..." paths
-# against the drive of its prefix, BunkerWeb's generated configuration only uses "/..." paths.
+# Paths compiled into nginx.exe are rooted at C:/bunkerweb (the single installation root). BunkerWeb's
+# generated configuration uses "/bunkerweb/..." paths (rewritten at build time by apply-windows-port.py),
+# which nginx for Windows resolves against the drive of its prefix, i.e. C:.
 ./configure \
 	--with-cc=gcc \
 	--with-cc-opt="-O2 -DFD_SETSIZE=4096 -std=gnu11 -Wno-error $RELAXED_CFLAGS -Wno-deprecated-declarations" \
-	--prefix=C:/usr/share/bunkerweb \
-	--sbin-path=C:/usr/sbin/nginx.exe \
-	--conf-path=C:/etc/nginx/nginx.conf \
-	--pid-path=C:/var/run/bunkerweb/nginx.pid \
-	--lock-path=C:/var/run/bunkerweb/nginx.lock \
-	--error-log-path=C:/var/log/bunkerweb/error.log \
-	--http-log-path=C:/var/log/bunkerweb/access.log \
-	--http-client-body-temp-path=C:/var/tmp/bunkerweb/client_temp \
-	--http-proxy-temp-path=C:/var/tmp/bunkerweb/proxy_temp \
-	--http-fastcgi-temp-path=C:/var/tmp/bunkerweb/fastcgi_temp \
-	--http-uwsgi-temp-path=C:/var/tmp/bunkerweb/uwsgi_temp \
-	--http-scgi-temp-path=C:/var/tmp/bunkerweb/scgi_temp \
+	--prefix=C:/bunkerweb/usr/share/bunkerweb \
+	--sbin-path=C:/bunkerweb/usr/sbin/nginx.exe \
+	--conf-path=C:/bunkerweb/etc/nginx/nginx.conf \
+	--pid-path=C:/bunkerweb/var/run/bunkerweb/nginx.pid \
+	--lock-path=C:/bunkerweb/var/run/bunkerweb/nginx.lock \
+	--error-log-path=C:/bunkerweb/var/log/bunkerweb/error.log \
+	--http-log-path=C:/bunkerweb/var/log/bunkerweb/access.log \
+	--http-client-body-temp-path=C:/bunkerweb/var/tmp/bunkerweb/client_temp \
+	--http-proxy-temp-path=C:/bunkerweb/var/tmp/bunkerweb/proxy_temp \
+	--http-fastcgi-temp-path=C:/bunkerweb/var/tmp/bunkerweb/fastcgi_temp \
+	--http-uwsgi-temp-path=C:/bunkerweb/var/tmp/bunkerweb/uwsgi_temp \
+	--http-scgi-temp-path=C:/bunkerweb/var/tmp/bunkerweb/scgi_temp \
 	--with-select_module \
 	--with-pcre-jit \
 	--with-http_ssl_module \
@@ -216,7 +217,10 @@ grep -n 'whole-archive' objs/Makefile
 endgroup
 
 group "nginx: build"
-make -j"$NPROC" -f objs/Makefile
+# Build the "binary" target only: the default target also builds the man page, whose source
+# (docs/man/nginx.8) is not part of the nginx copy vendored by BunkerWeb. The configure run
+# above has no dynamic modules, so there is nothing else to build.
+make -j"$NPROC" -f objs/Makefile binary
 test -f objs/nginx.exe
 cp objs/nginx.exe "$OUT/sbin/"
 cp conf/mime.types "$OUT/nginx-conf/"

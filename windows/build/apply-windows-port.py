@@ -61,11 +61,13 @@ def insert_after(rel, anchor, addition):
 print(f"Applying Windows port to {SRC}")
 
 # ---------------------------------------------------------------- 1. overlay files
+overlay_files = set()
 for item in OVERLAY.rglob("*"):
     if item.is_file():
         target = SRC / item.relative_to(OVERLAY)
         target.parent.mkdir(parents=True, exist_ok=True)
         shutil.copy2(item, target)
+        overlay_files.add(target.resolve())
         print(f"  overlay {target.relative_to(SRC)}")
 
 # ---------------------------------------------------------------- 2. nginx.conf template
@@ -201,7 +203,103 @@ rep(
     1,
 )
 
-# ---------------------------------------------------------------- 13. Windows marker
+# ---------------------------------------------------------------- 13. single root folder: C:\bunkerweb
+# Everything of this port lives below C:\bunkerweb, in the same sub-layout as the Linux packages
+# (C:\bunkerweb\etc\bunkerweb, C:\bunkerweb\var\lib\bunkerweb, ...). BunkerWeb hardcodes the Linux locations,
+# so they are rewritten here: "/etc/bunkerweb" becomes "/bunkerweb/etc/bunkerweb". A rooted path without
+# drive letter resolves against the drive of the working directory (C:, every service runs in C:\bunkerweb),
+# the same mechanism that resolved "/etc/bunkerweb" to C:\etc\bunkerweb before.
+#
+# Only BunkerWeb's own locations are rewritten. System paths (/dev/null, /usr/bin/env, /etc/os-release, ...) and
+# the OWASP CRS data files are left alone. The rewrite is idempotent (the inserted prefix makes the inner
+# "/etc/bunkerweb" fail the lookbehind). Files copied from windows/overlay already use the final paths.
+ROOT = "/bunkerweb"
+OWN_DIRS = r"(?:etc/bunkerweb|etc/nginx|usr/share/bunkerweb|var/(?:cache|tmp|lib|log|run)/bunkerweb|tmp/bunkerweb|var/www/html)"
+# "/etc/bunkerweb", "sqlite:////var/lib/bunkerweb/...", "{% if x %}/var/www/html"; not after a word character or
+# the end of a template expression ("{{ x }}/etc/..." is relative to x)
+TEXT_PATH_RE = re.compile(r"(?<![\w.~$)\]-])(?<!\}\})(?=/" + OWN_DIRS + ")")
+# join(sep, "usr", "share", "bunkerweb"), Path("/", "etc", "bunkerweb"), os.path.join(os.sep, ...)
+_Q = r"[\"']"
+_PARTS = (
+    rf"(?:{_Q}usr{_Q}\s*,\s*{_Q}share{_Q}\s*,\s*{_Q}bunkerweb{_Q}"
+    rf"|{_Q}etc{_Q}\s*,\s*{_Q}(?:bunkerweb|nginx){_Q}"
+    rf"|{_Q}var{_Q}\s*,\s*{_Q}(?:cache|tmp|lib|log|run){_Q}\s*,\s*{_Q}bunkerweb{_Q}"
+    rf"|{_Q}tmp{_Q}\s*,\s*{_Q}bunkerweb{_Q}"
+    rf"|{_Q}var{_Q}\s*,\s*{_Q}www{_Q}\s*,\s*{_Q}html{_Q})"
+)
+PART_PATH_RE = re.compile(rf"((?:\bsep|{_Q}/{_Q})\s*,\s*)(?={_PARTS})")
+
+REWRITE_SUFFIXES = {".py", ".lua", ".conf", ".json", ".modsec"}
+REWRITE_SKIP_TOP = {"deps", "linux", "all-in-one", "autoconf"}  # third party sources, Linux packaging, containers
+REWRITE_SKIP_ANY = {"static", "locales", "node_modules", "__pycache__", "coreruleset-v3", "coreruleset-v4"}
+# third party Lua libraries that BunkerWeb patches to load its libz/libmaxminddb by absolute path
+REWRITE_EXTRA = ("deps/src/lua-ffi-zlib/lib/ffi-zlib.lua", "deps/src/luajit-geoip/geoip/mmdb.lua")
+
+
+def rewrite_candidates():
+    for path in sorted(SRC.rglob("*")):
+        if not path.is_file():
+            continue
+        rel = path.relative_to(SRC)
+        if rel.as_posix() in REWRITE_EXTRA:
+            yield rel, path
+            continue
+        if rel.parts[0] in REWRITE_SKIP_TOP or REWRITE_SKIP_ANY.intersection(rel.parts):
+            continue
+        # shell scripts: only the plugin helpers that jobs may run through busybox
+        if path.suffix in REWRITE_SUFFIXES or (path.suffix == ".sh" and rel.parts[0] == "common" and "core" in rel.parts):
+            yield rel, path
+
+
+rewritten = {}
+for rel, path in rewrite_candidates():
+    if path.resolve() in overlay_files:
+        continue
+    try:
+        text = path.read_text(encoding="utf-8", newline="")
+    except UnicodeDecodeError:
+        continue
+    result, n_text = TEXT_PATH_RE.subn(ROOT, text)
+    n_parts = 0
+    if path.suffix == ".py":
+        result, n_parts = PART_PATH_RE.subn(r'\1"bunkerweb", ', result)
+    if n_text or n_parts:
+        path.write_text(result, encoding="utf-8", newline="")
+        rewritten[rel.as_posix()] = n_text + n_parts
+print(f"  rewrote BunkerWeb paths below {ROOT} in {len(rewritten)} files ({sum(rewritten.values())} occurrences)")
+# the rewrite must have reached the places the services depend on (a miss means upstream moved something)
+for rel in (
+    *REWRITE_EXTRA,
+    "common/confs/nginx.conf",
+    "common/confs/init-lua.conf",
+    "common/settings.json",
+    "common/core/db/plugin.json",
+    "common/gen/main.py",
+    "common/utils/logger.py",
+    "common/core/letsencrypt/jobs/letsencrypt_utils.py",
+    "common/core/letsencrypt/letsencrypt.lua",
+    "scheduler/main.py",
+    "scheduler/JobScheduler.py",
+    "bw/lua/bunkerweb/utils.lua",
+    "bw/lua/bunkerweb/api.lua",
+):
+    if rel not in rewritten:
+        errors.append(f"{rel}: expected BunkerWeb paths to be rewritten below {ROOT}, found none")
+# Linux locations the rewrite deliberately skipped (e.g. built from a variable): only reported, to be reviewed
+REWRITTEN_RE = re.compile(re.escape(ROOT) + "/" + OWN_DIRS)
+SKIPPED_RE = re.compile("/" + OWN_DIRS)
+for rel, path in rewrite_candidates():
+    if path.resolve() in overlay_files:
+        continue
+    try:
+        text = path.read_text(encoding="utf-8", newline="")
+    except UnicodeDecodeError:
+        continue
+    text = REWRITTEN_RE.sub("", text)
+    for m in SKIPPED_RE.finditer(text):
+        print(f"  NOTE {rel.as_posix()}: Linux path not moved below {ROOT}: ...{text[max(0, m.start() - 12):m.end() + 12]!r}")
+
+# ---------------------------------------------------------------- 14. Windows marker
 (SRC / "WINDOWS_PORT").write_text("applied\n", encoding="utf-8")
 
 if errors:

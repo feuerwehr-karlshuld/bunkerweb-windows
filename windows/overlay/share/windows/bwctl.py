@@ -2,7 +2,7 @@
 
     bwctl status             service states, nginx health and listening ports
     bwctl reload             ask nginx (internal API on 127.0.0.1:5000) to reload its current configuration
-    bwctl reload-scheduler   ask the scheduler to re-read /etc/bunkerweb/variables.env and regenerate the config
+    bwctl reload-scheduler   ask the scheduler to re-read variables.env and regenerate the config
     bwctl restart [svc ...]  restart services (default: all installed ones, in dependency order)
     bwctl test               run `nginx -t` against the live configuration
     bwctl logs [name] [-n N] print the tail of a log file (error, access, scheduler, ui, api, service-<name>)
@@ -17,9 +17,10 @@ import urllib.request
 from ctypes import wintypes
 from pathlib import Path
 
-ETC = Path(r"C:\etc\bunkerweb")
-LOG_DIR = Path(r"C:\var\log\bunkerweb")
-NGINX_EXE = r"C:\usr\sbin\nginx.exe"
+ROOT_DIR = r"C:\bunkerweb"
+ETC = Path(ROOT_DIR) / "etc" / "bunkerweb"
+LOG_DIR = Path(ROOT_DIR) / "var" / "log" / "bunkerweb"
+NGINX_EXE = ROOT_DIR + r"\usr\sbin\nginx.exe"
 SERVICES = ("bunkerweb-nginx", "bunkerweb-scheduler", "bunkerweb-ui", "bunkerweb-api")
 SCHEDULER_RELOAD_EVENT = "Global\\bunkerweb_scheduler_reload"
 
@@ -83,7 +84,7 @@ def cmd_status(_args) -> int:
     code, body = http(f"http://{api_ip}:{api_port}/ping", host=v.get("API_SERVER_NAME", "bwapi").strip() or "bwapi", token=v.get("API_TOKEN", "").strip(), timeout=3)
     print(f"{'internal api':<22} {'ok' if code == 200 else f'{code} {body.strip()[:80]}'}")
     if "IS_LOADING" in v and v["IS_LOADING"].strip().lower() == "yes":
-        print("\nNOTE: IS_LOADING=yes is set in C:\\etc\\bunkerweb\\variables.env - BunkerWeb serves the loading page until you remove it.")
+        print("\nNOTE: IS_LOADING=yes is set in C:\\bunkerweb\\etc\\bunkerweb\\variables.env - BunkerWeb serves the loading page until you remove it.")
     return 0
 
 
@@ -127,7 +128,7 @@ def cmd_restart(args) -> int:
 
 
 def cmd_test(_args) -> int:
-    return subprocess.run([NGINX_EXE, "-t", "-e", "/var/log/bunkerweb/error.log"], cwd="C:\\").returncode
+    return subprocess.run([NGINX_EXE, "-t", "-e", "/bunkerweb/var/log/bunkerweb/error.log"], cwd=ROOT_DIR).returncode
 
 
 def cmd_logs(args) -> int:

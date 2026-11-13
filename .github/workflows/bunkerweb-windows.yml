@@ -6,7 +6,7 @@
 #   modsecurity  libModSecurity.dll (MSVC 2022 + conan, ModSecurity's own build/win32)
 #   native       nginx.exe + modules, LuaJIT, Lua C modules, runtime DLLs (MSYS2 UCRT64 / GCC)
 #   python       private CPython + BunkerWeb Python dependencies
-#   package      staged C:\ tree + Inno Setup installer
+#   package      staged C:\bunkerweb tree + Inno Setup installer
 #   smoke-test   installs the result on a clean runner and proxies a request through BunkerWeb
 #   release      tags v<bunkerweb-version>-win<N> (e.g. v1.6.17-win1) publish a GitHub release
 #
@@ -247,7 +247,7 @@ jobs:
             Write-Host "$($tool.File): $hash"
           }
 
-      - name: Stage the C:\ tree
+      - name: Stage the C:\bunkerweb tree
         run: >-
           ./windows/build/stage.ps1
           -Repo bunkerweb
@@ -329,9 +329,9 @@ jobs:
           Start-Sleep -Seconds 2
           (Invoke-WebRequest -UseBasicParsing http://127.0.0.1:8081/).Content
 
-      - name: Pre-seed C:\etc\bunkerweb\variables.env (configuration as code)
+      - name: Pre-seed C:\bunkerweb\etc\bunkerweb\variables.env (configuration as code)
         run: |
-          New-Item -ItemType Directory -Force C:\etc\bunkerweb | Out-Null
+          New-Item -ItemType Directory -Force C:\bunkerweb\etc\bunkerweb | Out-Null
           @(
             "SERVER_NAME=$env:SITE"
             'MULTISITE=yes'
@@ -345,8 +345,8 @@ jobs:
             "${env:SITE}_USE_REVERSE_PROXY=yes"
             "${env:SITE}_REVERSE_PROXY_URL=/"
             "${env:SITE}_REVERSE_PROXY_HOST=http://127.0.0.1:8081"
-          ) | Set-Content -Encoding ascii C:\etc\bunkerweb\variables.env
-          Get-Content C:\etc\bunkerweb\variables.env
+          ) | Set-Content -Encoding ascii C:\bunkerweb\etc\bunkerweb\variables.env
+          Get-Content C:\bunkerweb\etc\bunkerweb\variables.env
 
       - name: Install (silent)
         run: |
@@ -356,6 +356,15 @@ jobs:
             -ArgumentList '/VERYSILENT', '/SUPPRESSMSGBOXES', '/NORESTART', '/LOG=C:\bunkerweb-setup.log', '/TASKS="startservices,webui,firewall"'
           if ($p.ExitCode -ne 0) { throw "Setup failed with exit code $($p.ExitCode)" }
           Get-Service bunkerweb-* | Format-Table Name, Status, StartType
+
+      - name: Nothing is installed outside C:\bunkerweb
+        run: |
+          foreach ($d in 'C:\usr', 'C:\etc', 'C:\var', 'C:\tmp') {
+            if (Test-Path $d) { throw "$d exists, BunkerWeb must only use C:\bunkerweb" }
+          }
+          foreach ($d in 'usr\sbin\nginx.exe', 'etc\bunkerweb\variables.env', 'var\log\bunkerweb') {
+            if (-not (Test-Path "C:\bunkerweb\$d")) { throw "C:\bunkerweb\$d is missing" }
+          }
 
       - name: Services are running and nginx is healthy
         run: |
@@ -400,13 +409,13 @@ jobs:
 
       - name: bwctl status / test / reload / reload-scheduler
         run: |
-          C:\usr\bin\bwctl.cmd status
+          C:\bunkerweb\usr\bin\bwctl.cmd status
           if ($LASTEXITCODE -ne 0) { throw 'bwctl status failed' }
-          C:\usr\bin\bwctl.cmd test
+          C:\bunkerweb\usr\bin\bwctl.cmd test
           if ($LASTEXITCODE -ne 0) { throw 'bwctl test (nginx -t) failed' }
-          C:\usr\bin\bwctl.cmd reload
+          C:\bunkerweb\usr\bin\bwctl.cmd reload
           if ($LASTEXITCODE -ne 0) { throw 'bwctl reload failed' }
-          C:\usr\bin\bwctl.cmd reload-scheduler
+          C:\bunkerweb\usr\bin\bwctl.cmd reload-scheduler
           if ($LASTEXITCODE -ne 0) { throw 'bwctl reload-scheduler failed' }
           Start-Sleep -Seconds 30
           $r = Invoke-WebRequest -UseBasicParsing -TimeoutSec 10 -SkipHttpErrorCheck -UserAgent $env:UA -Headers @{ Host = $env:SITE } http://127.0.0.1/
@@ -429,7 +438,7 @@ jobs:
 
       - name: Restart survives (stop/start of all services)
         run: |
-          C:\usr\bin\bwctl.cmd restart
+          C:\bunkerweb\usr\bin\bwctl.cmd restart
           if ($LASTEXITCODE -ne 0) { throw 'bwctl restart failed' }
           Start-Sleep -Seconds 20
           $deadline = (Get-Date).AddMinutes(3)
@@ -449,7 +458,7 @@ jobs:
         run: |
           Get-Service bunkerweb-* -ErrorAction SilentlyContinue | Format-Table Name, Status, StartType
           Get-NetTCPConnection -State Listen -ErrorAction SilentlyContinue | Where-Object LocalPort -in 80, 443, 5000, 6000, 7000, 8888 | Format-Table LocalAddress, LocalPort, OwningProcess
-          Get-ChildItem C:\var\log\bunkerweb -Recurse -File -ErrorAction SilentlyContinue | ForEach-Object {
+          Get-ChildItem C:\bunkerweb\var\log\bunkerweb -Recurse -File -ErrorAction SilentlyContinue | ForEach-Object {
             Write-Host "::group::$($_.FullName)"
             Get-Content $_.FullName -Tail 150
             Write-Host '::endgroup::'
@@ -459,10 +468,10 @@ jobs:
         if: always()
         run: |
           New-Item -ItemType Directory -Force C:\smoke-artifacts | Out-Null
-          foreach ($p in 'C:\var\log\bunkerweb', 'C:\etc\nginx', 'C:\bunkerweb-setup.log', 'C:\etc\bunkerweb\variables.env') {
+          foreach ($p in 'C:\bunkerweb\var\log\bunkerweb', 'C:\bunkerweb\etc\nginx', 'C:\bunkerweb-setup.log', 'C:\bunkerweb\etc\bunkerweb\variables.env') {
             if (Test-Path $p) { Copy-Item -Recurse -Force $p C:\smoke-artifacts\ }
           }
-          Get-ChildItem C:\var\tmp\bunkerweb -Filter *.error -ErrorAction SilentlyContinue | Copy-Item -Destination C:\smoke-artifacts\
+          Get-ChildItem C:\bunkerweb\var\tmp\bunkerweb -Filter *.error -ErrorAction SilentlyContinue | Copy-Item -Destination C:\smoke-artifacts\
 
       - uses: actions/upload-artifact@v7
         if: always()
@@ -479,7 +488,7 @@ jobs:
           $deadline = (Get-Date).AddMinutes(3)
           while ((Get-Service bunkerweb-* -ErrorAction SilentlyContinue) -and (Get-Date) -lt $deadline) { Start-Sleep -Seconds 3 }
           if (Get-Service bunkerweb-* -ErrorAction SilentlyContinue) { throw 'Services still registered after uninstall' }
-          if (-not (Test-Path C:\etc\bunkerweb\variables.env)) { throw 'Configuration was removed by the uninstaller' }
+          if (-not (Test-Path C:\bunkerweb\etc\bunkerweb\variables.env)) { throw 'Configuration was removed by the uninstaller' }
           Write-Host 'Uninstalled, configuration kept.'
 
   # ------------------------------------------------------------------------------------------ release

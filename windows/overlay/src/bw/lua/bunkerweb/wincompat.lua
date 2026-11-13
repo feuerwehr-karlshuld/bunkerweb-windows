@@ -1,7 +1,7 @@
 -- BunkerWeb for Windows: compatibility layer for nginx/LuaJIT built with MinGW-w64 (UCRT64).
 --
 -- Loaded first by init_by_lua (see windows/build/apply-windows-port.py). It provides:
---   * Windows paths for package.cpath and ffi.load ("/usr/..." -> "C:\usr\...")
+--   * Windows paths for package.cpath and ffi.load ("/bunkerweb/usr/..." -> "C:\bunkerweb\usr\...")
 --   * io.popen / os.execute running commands through busybox-w32 "sh -c"
 --   * a tiny libc emulation (fopen/fileno/flock/fputs/fclose/fchmod) used by api.lua and the
 --     crowdsec stream lock, backed by Win32 file handles and LockFileEx (flock semantics)
@@ -24,8 +24,9 @@ local rep = string.rep
 local sub = string.sub
 
 local DRIVE = "C:"
-local BUSYBOX = DRIVE .. "\\usr\\bin\\busybox.exe"
-local PID_FILE = "/var/run/bunkerweb/nginx.pid"
+local ROOT = DRIVE .. "\\bunkerweb"
+local BUSYBOX = ROOT .. "\\usr\\bin\\busybox.exe"
+local PID_FILE = "/bunkerweb/var/run/bunkerweb/nginx.pid"
 
 local function cdef(decl)
 	pcall(ffi.cdef, decl)
@@ -87,7 +88,7 @@ local function is_invalid(h)
 	return h == nil or tonumber(ffi.cast("intptr_t", h)) == -1
 end
 
--- "/usr/share/x" -> "C:\usr\share\x"; relative names and names with a drive are kept
+-- "/bunkerweb/usr/share/x" -> "C:\bunkerweb\usr\share\x"; relative names and names with a drive are kept
 local function winpath(path)
 	if type(path) ~= "string" then
 		return path

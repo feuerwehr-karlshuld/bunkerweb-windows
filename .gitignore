@@ -1,3 +1,4 @@
 # Local outputs of the BunkerWeb Windows build (windows/build/*)
 /build/
 /dist/
+/tmp

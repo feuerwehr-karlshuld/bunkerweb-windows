@@ -24,8 +24,12 @@ HTTP backends on the same server and in the LAN, Let's Encrypt via **HTTP-01** (
 3. **Do not commit, push, tag or create branches unless the user asks.** Tags `v<bunkerweb-version>-win<N>` trigger releases.
 4. **Licence is AGPLv3** (upstream). The repo must stay public, or the source must otherwise be available to users of the
    installer. Do not add code under incompatible licences.
-5. Keep **forward slashes / POSIX-style absolute paths** where BunkerWeb expects them. The port relies on the services having
-   working directory `C:\`, so `/etc/bunkerweb` resolves to `C:\etc\bunkerweb`.
+5. Keep **forward slashes / POSIX-style absolute paths** where BunkerWeb expects them. Everything lives under the single root
+   `C:\bunkerweb\` (mirroring the Linux sub-layout: `usr\`, `etc\`, `var\`). `apply-windows-port.py` (step 13) rewrites
+   BunkerWeb's own paths from `/etc/bunkerweb` to `/bunkerweb/etc/bunkerweb`; the services run with working directory
+   `C:\bunkerweb` (on `C:`), and Windows resolves the drive-less rooted path against the drive. Never introduce paths in
+   `C:\usr`, `C:\etc`, `C:\var` or `C:\tmp`, and put final `/bunkerweb/...` paths in `windows/overlay/` files (they are not
+   rewritten).
 6. Everything is **unofficial**: never direct users to Bunkerity for problems with this port.
 
 ## Repository map
@@ -40,7 +44,7 @@ windows/build/
   build-native.sh           MSYS2 UCRT64: LuaJIT, nginx.exe with ALL modules static, Lua C modules, Lua libs, runtime DLLs
   build-python.ps1          private CPython copy + hash-pinned deps (--require-hashes --no-deps --target) + certbot DNS alias patch
   prepare-requirements.py   merges BunkerWeb's per-component pip-compile files into one hashed file (drops uvloop)
-  stage.ps1                 assembles the C:\ mirror tree, verifies required files, writes BUILDINFO
+  stage.ps1                 assembles the tree mirroring C:\bunkerweb\, verifies required files, writes BUILDINFO
 windows/installer/bunkerweb.iss   Inno Setup 6 script (services, PATH, firewall, config kept on uninstall)
 windows/overlay/            files copied into the build: wincompat.lua (Lua/FFI shim), python-site/ (fcntl, pwd, grp,
                             sitecustomize), bwsvc.py (service runner), bwctl.py (operator CLI), bwctl.cmd, bwcli.cmd, certbot entry
@@ -93,13 +97,17 @@ restart, uninstall) -> `release` (tags only).
 - libModSecurity is built with MSVC (its supported Windows toolchain), nginx with MinGW/UCRT; they meet through the plain
   C API (`msc_*`) and a generated import library.
 - The submodule contains a few symlinks (mbedtls examples, brotli research); harmless on Windows.
-- Let's Encrypt data lives in `C:\var\cache\bunkerweb\letsencrypt` (`/var/cache/bunkerweb/letsencrypt` upstream).
+- Let's Encrypt data lives in `C:\bunkerweb\var\cache\bunkerweb\letsencrypt` (`/var/cache/bunkerweb/letsencrypt` upstream).
 - Upstream UI/API use gunicorn; the port uses waitress (UI) and uvicorn without uvloop (API).
 
 ## Current state
 
 *Last updated 2026-11-13. Update this section whenever the pipeline state changes.*
 
+- **Second CI run** (before the path refactor): `modsecurity` and `python` **passed** (`pip check` annotation only). `native`
+  got through LuaJIT, the Lua modules, nginx configure and the compilation of all nginx sources, then failed in `make` with
+  `No rule to make target 'docs/man/nginx.8'`: BunkerWeb's vendored nginx has no `docs/` directory and nginx's default target
+  builds the man page. Fix written (`make -f objs/Makefile binary`), not yet re-run, so the link step is still unseen.
 - **First CI run** (push of the initial port):
   - `modsecurity`: **passed** (about 21 minutes, conan cache now filled).
   - `python`: failed, certbot's Windows-only dependency `pywin32` was not hash-pinned. Fix written (see Gotchas), not yet re-run.
@@ -108,6 +116,12 @@ restart, uninstall) -> `release` (tags only).
 - Since then: all GitHub Actions bumped to Node 24 majors (`checkout@v7`, `setup-python@v7`, `cache@v6`,
   `upload-artifact@v7`, `download-artifact@v8`, `action-gh-release@v3`); the repo was moved out of the old `reverse-proxy`
   repository into this one. The workflow has not run in this repo yet.
+- **Path refactor (unverified):** all `C:\usr`, `C:\etc`, `C:\var`, `C:\tmp` locations moved below `C:\bunkerweb\`
+  (build-time path rewrite in `apply-windows-port.py` step 13, `C:/bunkerweb/...` compiled into nginx, service working directory
+  `C:\bunkerweb`, installer, WinSW XMLs, `bwsvc.py`, `bwctl.*`, smoke test). Only the rewrite itself was exercised, on a copy of
+  `bunkerweb/src` on Linux (all changed `.py` files parse, second pass is a no-op). Nothing has run in CI since. Watch for: rewrite
+  coverage (the step prints `NOTE` lines for skipped Linux paths, only `/usr/local/etc/nginx/nginx.conf` in `api.lua` is expected),
+  nginx's compiled-in paths, and the new smoke-test step "Nothing is installed outside C:\bunkerweb".
 - **Next:** push, run the workflow, iterate on failures. Most likely trouble spots, roughly in order: nginx link step
   (OpenSSL whole-archive, libModSecurity import lib, module linking), Python 3.14 wheel availability, `stage.ps1`
   required-files check, installer script, runtime behaviour of the shims and `bwsvc.py` in the smoke test (reload via named

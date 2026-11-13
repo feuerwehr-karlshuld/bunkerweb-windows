@@ -549,6 +549,15 @@ jobs:
             if (-not (Test-Path "C:\bunkerweb\$d")) { throw "C:\bunkerweb\$d is missing" }
           }
 
+      - name: Busybox applets used by BunkerWeb are available
+        run: |
+          # pushswap.lua, api.lua and the scheduler shell out to these (tar for the /confs push, uname for bunkernet)
+          $bb = 'C:\bunkerweb\usr\bin\busybox.exe'
+          $applets = (& $bb --list) -split "`r?`n"
+          $missing = 'sh', 'tar', 'gzip', 'find', 'ls', 'cp', 'rm', 'mkdir', 'test', 'uname', 'mv', 'cat' | Where-Object { $applets -notcontains $_ }
+          if ($missing) { throw "busybox lacks applets: $($missing -join ', ')" }
+          & $bb uname -m
+
       - name: Services are running and nginx is healthy
         run: |
           # Fail fast: the services have onfailure=restart (10/30/60 s), so a crash-looping service looks "fine" most of the time

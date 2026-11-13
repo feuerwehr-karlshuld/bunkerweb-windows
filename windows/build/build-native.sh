@@ -243,17 +243,36 @@ for dll in "$PREFIX_UCRT"/bin/libmagic*.dll; do
 	[ -f "$dll" ] && cp "$dll" "$OUT/sbin/"
 done
 
-# every MinGW DLL any of our binaries needs, recursively (ldd resolves the whole tree)
-collect_dlls() {
-	ldd "$1" 2>/dev/null | awk '{print $3}' | grep -i "^$PREFIX_UCRT/bin/" || true
+# Every MinGW DLL any of our binaries needs, transitively. (MSYS2's ldd only lists the direct imports of a binary:
+# libgd.dll was copied, but not the libpng/libjpeg/freetype/... behind it, so LuaJIT could not load gd.so.)
+# objdump reads the import table, the DLLs that exist in the MinGW bin directory are the ones to ship, everything
+# else (kernel32, api-ms-win-*, ucrtbase, the MSVC runtime that comes with libModSecurity) is Windows' or already shipped.
+imports_in_prefix() {
+	local name
+	objdump -p "$1" 2>/dev/null | awk '/DLL Name:/ {print $3}' | tr -d '\r' | while read -r name; do
+		if [ -f "$PREFIX_UCRT/bin/$name" ]; then echo "$PREFIX_UCRT/bin/$name"; fi
+	done || true
 }
+copy_dll_closure() {
+	local queue=("$@") seen=" " file dll
+	while [ "${#queue[@]}" -gt 0 ]; do
+		file="${queue[0]}"
+		queue=("${queue[@]:1}")
+		while read -r dll; do
+			[ -n "$dll" ] || continue
+			case "$seen" in *" $dll "*) continue ;; esac
+			seen="$seen$dll "
+			[ -f "$OUT/sbin/$(basename "$dll")" ] || cp "$dll" "$OUT/sbin/"
+			queue+=("$dll")
+		done < <(imports_in_prefix "$file")
+	done
+}
+roots=()
 for binary in "$OUT/sbin/nginx.exe" "$OUT/sbin/lua51.dll" "$LUA_OUT/cjson.so" "$LUA_OUT/gd.so" \
 	"$OUT/bin/openssl.exe" "$OUT/bin/sqlite3.exe" "$OUT/deps/lib/libmaxminddb.so" "$OUT/sbin/"libmagic*.dll; do
-	[ -f "$binary" ] || continue
-	collect_dlls "$binary"
-done | sort -u | while read -r dll; do
-	[ -f "$OUT/sbin/$(basename "$dll")" ] || cp "$dll" "$OUT/sbin/"
+	if [ -f "$binary" ]; then roots+=("$binary"); fi
 done
+copy_dll_closure "${roots[@]}"
 
 cp "$MODSEC/"*.dll "$OUT/sbin/"
 endgroup
@@ -272,6 +291,19 @@ for symbol in OpenSSL_version_num SSL_CTX_new EVP_PKEY_new ngx_http_lua_ffi_get_
 	grep -qE "[][[:space:]]${symbol}[[:space:]]*\$" "$WORK/nginx-exports.txt" || { echo "nginx.exe does not export $symbol (needed by ffi.C)" >&2; exit 1; }
 done
 echo "nginx.exe exports the OpenSSL and lua-resty-core FFI symbols"
+# every import of everything we ship that comes from the MinGW prefix must sit next to nginx.exe (found through PATH/app dir)
+unresolved=0
+for binary in "$OUT/sbin/"*.dll "$OUT/sbin/nginx.exe" "$LUA_OUT/cjson.so" "$LUA_OUT/gd.so" "$OUT/deps/lib/libmaxminddb.so" "$OUT/bin/"*.exe; do
+	[ -f "$binary" ] || continue
+	while read -r name; do
+		if [ -f "$PREFIX_UCRT/bin/$name" ] && [ ! -f "$OUT/sbin/$name" ]; then
+			echo "$(basename "$binary") imports $name, which is not in sbin" >&2
+			unresolved=1
+		fi
+	done < <(objdump -p "$binary" 2>/dev/null | awk '/DLL Name:/ {print $3}' | tr -d '\r')
+done
+[ "$unresolved" -eq 0 ] || exit 1
+echo "all MinGW DLL imports are shipped in sbin"
 {
 	echo "nginx=$NGINX_VERSION"
 	echo "luajit=$(cd "$D/luajit" && cat .relver 2>/dev/null || echo unknown)"

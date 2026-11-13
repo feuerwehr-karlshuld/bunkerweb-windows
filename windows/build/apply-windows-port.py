@@ -182,6 +182,62 @@ rep(
     1,
 )
 
+# ---------------------------------------------------------------- 7b. third-party Lua libraries that call libc/winsock through ffi.C
+# On Windows ffi.C only searches the executable's exports, lua51.dll, the C runtime, kernel32, user32 and gdi32. It does not
+# search ws2_32.dll (inet_pton, inet_ntop, ntohl) and the UCRT has no setenv/unsetenv. These libraries are copied from the
+# patched tree by build-native.sh. Every one of these calls is lazy: the module loads fine and then fails on the first request.
+# - lua-resty-ipmatcher: every IP/network check of BunkerWeb (whitelist, blacklist, limit, utils.is_ipv4, ...)
+# - lua-resty-env: env.set("is_whitelisted", ...) runs in the set phase of every request (whitelist plugin)
+# - lua-resty-openssl altname: IP subject alternative names of certificates
+# - lua-resty-core shdict: C.free() of values larger than the stack buffer (BunkerWeb keeps big tables in shared dicts)
+WS2_C = (
+    "local C = ffi.C\n"
+    'if ffi.os == "Windows" then\n'
+    "    -- Windows port: ffi.C does not search ws2_32.dll\n"
+    "    C = setmetatable({}, { __index = ffi.load(\"ws2_32\") })\n"
+    "end\n"
+)
+rep_re("deps/src/lua-resty-ipmatcher/resty/ipmatcher.lua", r"local C\s+= ffi\.C\n", WS2_C.replace("\\", "\\\\"), 1)
+rep("deps/src/lua-resty-openssl/lib/resty/openssl/x509/altname.lua", "local C = ffi.C\n", WS2_C, 1)
+rep(
+    "deps/src/lua-resty-env/src/resty/env.lua",
+    "local C = ffi.C\n",
+    "local C = ffi.C\n"
+    'if jit.os == "Windows" then\n'
+    "    -- Windows port: the C runtime has no setenv/unsetenv, _putenv_s changes the environment the CRT (and libModSecurity) see\n"
+    '    ffi.cdef("int _putenv_s(const char *name, const char *value);")\n'
+    '    ffi.cdef("char ***__p__environ(void);")\n'
+    '    local ucrt = ffi.load("ucrtbase")\n'
+    "    local own = {\n"
+    "        setenv = function(name, value) return ucrt._putenv_s(name, value) == 0 and 0 or -1 end,\n"
+    '        unsetenv = function(name) return ucrt._putenv_s(name, "") == 0 and 0 or -1 end,\n'
+    "    }\n"
+    "    -- 'environ' is not an exported symbol of the UCRT, the pointer is fetched on every access (putenv may reallocate it)\n"
+    "    C = setmetatable({}, { __index = function(_, k)\n"
+    "        if own[k] then return own[k] end\n"
+    "        if k == 'environ' then return ucrt.__p__environ()[0] end\n"
+    "        return ffi.C[k]\n"
+    "    end })\n"
+    "end\n",
+    1,
+)
+SHDICT = "deps/src/lua-resty-core/lib/resty/core/shdict.lua"
+insert_after(
+    SHDICT,
+    'local value_type = ffi_new("int[1]")\n',
+    "local bw_free\n"
+    'if jit.os == "Windows" then\n'
+    "    -- Windows port: free() has to come from the C runtime nginx.exe allocated the buffer with\n"
+    '    local ok, ucrt = pcall(ffi.load, "ucrtbase")\n'
+    "    if ok then\n"
+    "        local ok2, f = pcall(function() return ucrt.free end)\n"
+    "        if ok2 then bw_free = f end\n"
+    "    end\n"
+    "end\n"
+    "bw_free = bw_free or C.free\n",
+)
+rep(SHDICT, "C.free(buf)", "bw_free(buf)", 2)
+
 # ---------------------------------------------------------------- 8. gen/sync_tree.py: /proc/uptime
 SYNC = "common/gen/sync_tree.py"
 # replace first: the helper inserted below contains the original text itself

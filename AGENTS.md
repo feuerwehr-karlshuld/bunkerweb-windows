@@ -121,6 +121,9 @@ never replace each other).
   named events `Global\ngx_<signal>_<pid>`, files opened with `FILE_SHARE_DELETE`.
 - libModSecurity is built with MSVC (its supported Windows toolchain), nginx with MinGW/UCRT; they meet through the plain
   C API (`msc_*`) and a generated import library.
+- **`ffi.C` on Windows only sees the exe exports, lua51.dll, the CRT, kernel32/user32/gdi32**: winsock (`inet_pton`, `ntohl`) needs
+  `ffi.load("ws2_32")`, and `setenv`/`unsetenv`/`environ` do not exist in the UCRT (`_putenv_s`, `__p__environ`). Such calls load fine
+  and fail on the first request. Check every `ffi.C`/`cdef` use of new Lua libraries after an upgrade (step 7/7b).
 - The submodule contains a few symlinks (mbedtls examples, brotli research); harmless on Windows.
 - Let's Encrypt data lives in `C:\bunkerweb\var\cache\bunkerweb\letsencrypt` (`/var/cache/bunkerweb/letsencrypt` upstream).
 - Upstream UI/API use gunicorn; the port uses waitress (UI) and uvicorn without uvloop (API).
@@ -137,6 +140,18 @@ never replace each other).
 
 *Last updated 2026-11-13. Update this section whenever the pipeline state changes.*
 
+- **Proactive review after the sixth run (unverified):** step 7b of `apply-windows-port.py` patches third-party Lua libraries
+  that call libc/winsock via `ffi.C`, which on Windows does not see `ws2_32` or `setenv`: `lua-resty-ipmatcher` (`inet_pton`,
+  `ntohl`, used by every IP check), `lua-resty-env` (`setenv`/`unsetenv`/`environ`, called per request by the whitelist plugin),
+  `lua-resty-openssl` altname (`inet_pton`/`inet_ntop`), `lua-resty-core` shdict (`free`, defensive). These fail lazily on the
+  first request, not at load. The smoke test also has a new check that the busybox applets BunkerWeb shells out to exist.
+- **Sixth CI run:** the fifth run's fixes **worked**: nginx now parses the whole configuration and `init_by_lua` runs (modsecurity
+  loads, plugin loading starts). `smoke-test` failed in the init phase: `can't load plugin ... antibot : error loading module 'gd'
+  from file ...\deps\lib\lua\gd.so: The specified module could not be found`. Cause: `build-native.sh` collected DLLs with
+  MSYS2's `ldd`, which only lists *direct* imports, so `libgd.dll` was shipped but not the libpng/libjpeg/freetype/... behind it.
+  Fix written, not yet re-run: `copy_dll_closure` (transitive, via `objdump -p` import tables) plus a verify step that fails the
+  native build when any shipped binary imports a MinGW DLL that is not in `sbin`. Likely next breakers: later plugins' init, the
+  scheduler's first push to the API (`pushswap.lua` moves directories with rename/`cp -a` through busybox), reload via named events.
 - **Fifth CI run:** the fourth run's fixes **worked** (generator renders, `default-server-cert` job OK, no cp1252 errors, the
   fail-fast step stopped after ~20 s with the service log tails, WinSW wrapper log wording `Started process <pid>` confirmed).
   `smoke-test` still failed: nginx exited on `unknown directive "http3"` (nginx for Windows has no `http_v3_module`; upstream's

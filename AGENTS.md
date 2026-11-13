@@ -84,7 +84,8 @@ restart, uninstall) -> `release` (tags only).
 
 ## Gotchas learned so far
 
-- **Windows-only Python deps are missing from the Linux lock files** (`pywin32` for certbot, `colorama`). The hashed install
+- **Windows-only Python deps are missing from the Linux lock files** (`pywin32` for certbot, `colorama`, `tzdata` for psycopg/zoneinfo).
+  The hashed install
   therefore uses `--no-deps` and a second unhashed step installs them; `pip check` reports other gaps. pywin32 lives in a
   `--target` dir, so `sitecustomize.py` processes its `.pth` file explicitly.
 - **nginx for Windows does not define `NGX_HAVE_VARIADIC_MACROS`**; code relying on `dd(...)`-style macros compiles arguments that
@@ -104,6 +105,11 @@ restart, uninstall) -> `release` (tags only).
 
 *Last updated 2026-11-13. Update this section whenever the pipeline state changes.*
 
+- **Third CI run** (after the path refactor and the nginx `binary` fix): `modsecurity`, `python` and `native` **passed**, so the
+  nginx link works. `package` failed in "Download busybox-w32 and WinSW": `frippery.org` answered `403 Forbidden` to the runner
+  (URL and hash are correct and reachable from elsewhere). Fix written: retries plus a fallback to the Chocolatey `busybox`
+  6354.0.0 package (`tools/busybox64.exe`, identical SHA-256), not yet re-run. The `pip check` warning was `psycopg requires
+  tzdata`; `tzdata` is now installed with the other Windows-only deps, not yet re-run. `stage`, installer, `smoke-test` unseen.
 - **Second CI run** (before the path refactor): `modsecurity` and `python` **passed** (`pip check` annotation only). `native`
   got through LuaJIT, the Lua modules, nginx configure and the compilation of all nginx sources, then failed in `make` with
   `No rule to make target 'docs/man/nginx.8'`: BunkerWeb's vendored nginx has no `docs/` directory and nginx's default target

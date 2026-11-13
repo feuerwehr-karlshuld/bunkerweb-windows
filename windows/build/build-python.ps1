@@ -76,8 +76,9 @@ Invoke-Checked 'pip install BunkerWeb dependencies' {
 # Windows-only dependencies that never show up in the Linux lock files:
 #   pywin32   certbot (file permissions, locking) imports win32security & co. on Windows
 #   colorama  click/tqdm/... colour output on the Windows console
+#   tzdata    psycopg (and zoneinfo in general): Windows has no system timezone database
 Invoke-Checked 'pip install Windows-only dependencies' {
-    & $python -m pip install --no-cache-dir --no-deps --upgrade --target $deps 'pywin32>=300' colorama
+    & $python -m pip install --no-cache-dir --no-deps --upgrade --target $deps 'pywin32>=300' colorama tzdata
 }
 
 # Report (but do not fail on) any other dependency that --no-deps left unresolved.

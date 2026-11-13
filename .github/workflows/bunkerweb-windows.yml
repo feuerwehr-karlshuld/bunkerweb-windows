@@ -54,6 +54,10 @@ env:
   PYTHON_VERSION: "3.14"
   BUSYBOX_URL: https://frippery.org/files/busybox/busybox-w64-FRP-6354-g5f09fb446.exe
   BUSYBOX_SHA256: 95343c871869cc0ab57ecec26b2f9af0370eb9c954f7e5ddd017163e4e0d09a0
+  # frippery.org answers 403 to GitHub's runners at times. The Chocolatey package for the same release carries the
+  # identical binary as tools/busybox64.exe (same SHA-256), so it is used as the fallback.
+  BUSYBOX_FALLBACK_URL: https://community.chocolatey.org/api/v2/package/busybox/6354.0.0
+  BUSYBOX_FALLBACK_MEMBER: tools/busybox64.exe
   WINSW_URL: https://github.com/winsw/winsw/releases/download/v2.12.0/WinSW.NET461.exe
   WINSW_SHA256: b5066b7bbdfba1293e5d15cda3caaea88fbeab35bd5b38c41c913d492aadfc4f
 
@@ -238,14 +242,37 @@ jobs:
       - name: Download busybox-w32 and WinSW (pinned by SHA-256)
         run: |
           New-Item -ItemType Directory -Force build/tools | Out-Null
-          foreach ($tool in @(
-              @{ Url = $env:BUSYBOX_URL; Sha = $env:BUSYBOX_SHA256; File = 'build/tools/busybox.exe' },
-              @{ Url = $env:WINSW_URL;   Sha = $env:WINSW_SHA256;   File = 'build/tools/WinSW.exe' })) {
-            Invoke-WebRequest -Uri $tool.Url -OutFile $tool.File -UseBasicParsing
-            $hash = (Get-FileHash -Algorithm SHA256 $tool.File).Hash.ToLowerInvariant()
-            if ($hash -ne $tool.Sha) { throw "Checksum mismatch for $($tool.Url): $hash" }
-            Write-Host "$($tool.File): $hash"
+
+          function Get-Sha256([string] $File) { (Get-FileHash -Algorithm SHA256 $File).Hash.ToLowerInvariant() }
+
+          function Get-Pinned {
+            param([string] $Url, [string] $File, [string] $Sha, [string] $ZipMember)
+            Invoke-WebRequest -Uri $Url -OutFile $File -UseBasicParsing -MaximumRetryCount 3 -RetryIntervalSec 5
+            if ($ZipMember) {
+              # the download is a zip/nupkg: take one member out of it
+              $zip = "$File.zip"
+              Move-Item -Force $File $zip
+              $tmp = "$File.extract"
+              Expand-Archive -Path $zip -DestinationPath $tmp -Force
+              Move-Item -Force (Join-Path $tmp $ZipMember) $File
+              Remove-Item -Recurse -Force $zip, $tmp
+            }
+            $hash = Get-Sha256 $File
+            if ($hash -ne $Sha) { Remove-Item -Force $File; throw "Checksum mismatch for ${Url}: $hash" }
           }
+
+          $busybox = 'build/tools/busybox.exe'
+          try {
+            Get-Pinned -Url $env:BUSYBOX_URL -File $busybox -Sha $env:BUSYBOX_SHA256
+          } catch {
+            Write-Host "::warning::busybox download from $env:BUSYBOX_URL failed ($($_.Exception.Message)), using the fallback"
+            Get-Pinned -Url $env:BUSYBOX_FALLBACK_URL -File $busybox -Sha $env:BUSYBOX_SHA256 -ZipMember $env:BUSYBOX_FALLBACK_MEMBER
+          }
+          Write-Host "${busybox}: $(Get-Sha256 $busybox)"
+
+          $winsw = 'build/tools/WinSW.exe'
+          Get-Pinned -Url $env:WINSW_URL -File $winsw -Sha $env:WINSW_SHA256
+          Write-Host "${winsw}: $(Get-Sha256 $winsw)"
 
       - name: Stage the C:\bunkerweb tree
         run: >-

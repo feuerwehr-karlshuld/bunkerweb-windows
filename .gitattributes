@@ -1,0 +1,4 @@
+# The patch files are applied byte for byte (git apply): no end-of-line conversion on any platform
+windows/patches/*.patch -text
+windows/patches/.patches text eol=lf
+windows/patches/BASE text eol=lf

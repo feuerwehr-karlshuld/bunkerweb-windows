@@ -1,0 +1,54 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: BunkerWeb Windows port <bunkerweb-windows@users.noreply.invalid>
+Date: Fri, 13 Nov 2026 23:51:55 +0100
+Subject: [PATCH] sync_tree: retry replacing a live generated file on Windows
+
+Moving a freshly generated file over the live one fails with WinError 5 (ACCESS_DENIED) while another process holds the
+target open without FILE_SHARE_DELETE (a reader such as nginx -t / libModSecurity, antivirus, an editor) or while the
+target is read-only. Both are transient or fixable: retry for up to 20 s, clearing the read-only attribute in between.
+Other platforms call os.replace directly.
+
+Upstream: none, Windows specific (os.replace semantics)
+Check: sync_tree() no longer fails with PermissionError when the target is open in another process on Windows
+
+diff --git a/common/gen/sync_tree.py b/common/gen/sync_tree.py
+index 3e23c8b..70816fe 100644
+--- a/common/gen/sync_tree.py
++++ b/common/gen/sync_tree.py
+@@ -12,6 +12,27 @@ from time import monotonic, sleep
+ from typing import Callable, Iterator, Optional
+ 
+ 
++def _bw_replace(src, dst) -> None:
++    import sys
++
++    if sys.platform != "win32":
++        replace(src, dst)
++        return
++    import stat
++
++    deadline = monotonic() + 20
++    while True:
++        try:
++            replace(src, dst)
++            return
++        except PermissionError:
++            if monotonic() >= deadline:
++                raise
++            with suppress(OSError):
++                Path(dst).chmod(stat.S_IWRITE | stat.S_IREAD)
++            sleep(0.25)
++
++
+ def _bw_uptime_bytes() -> bytes:
+     import sys
+     if sys.platform == "win32":
+@@ -112,7 +133,7 @@ def sync_tree(source: Path, destination: Path, before_change: Optional[Callable[
+             if entry.is_file() and not entry.is_symlink() and target.is_file() and not target.is_symlink() and same_file(entry, target):
+                 continue
+             touch()
+-            replace(entry, target)
++            _bw_replace(entry, target)
+ 
+         for existing in dst.iterdir():
+             if existing.name in wanted or (root and existing.name.startswith(RESERVED_PREFIX)):

@@ -13,6 +13,7 @@ import ctypes
 import json
 import subprocess
 import sys
+import time
 import urllib.error
 import urllib.request
 from ctypes import wintypes
@@ -22,6 +23,7 @@ ROOT_DIR = r"C:\bunkerweb"
 ETC = Path(ROOT_DIR) / "etc" / "bunkerweb"
 LOG_DIR = Path(ROOT_DIR) / "var" / "log" / "bunkerweb"
 NGINX_EXE = ROOT_DIR + r"\usr\sbin\nginx.exe"
+RELOAD_MARKER = Path(ROOT_DIR) / "var" / "tmp" / "bunkerweb" / "reloading"
 SERVICES = ("bunkerweb-nginx", "bunkerweb-scheduler", "bunkerweb-ui", "bunkerweb-api")
 SCHEDULER_RELOAD_EVENT = "Global\\bunkerweb_scheduler_reload"
 
@@ -101,14 +103,26 @@ def cmd_reload(_args) -> int:
     v = variables()
     api_ip = v.get("API_LISTEN_IP", "127.0.0.1").strip() or "127.0.0.1"
     api_port = v.get("API_HTTP_PORT", "5000").strip() or "5000"
-    code, body = http(
-        f"http://{api_ip}:{api_port}/reload?test=yes",
-        method="POST",
-        host=v.get("API_SERVER_NAME", "bwapi").strip() or "bwapi",
-        token=v.get("API_TOKEN", "").strip(),
-        timeout=60,
-    )
+    # BunkerWeb allows one reload at a time, from the signal until the new workers are up (they remove the marker about
+    # five seconds later), and answers 503 after waiting four seconds for the one in flight. The scheduler retries such
+    # a 503 as well: so do we, instead of failing right after the scheduler's own (startup/job) reload.
+    deadline = time.monotonic() + 90
+    while True:
+        code, body = http(
+            f"http://{api_ip}:{api_port}/reload?test=yes",
+            method="POST",
+            host=v.get("API_SERVER_NAME", "bwapi").strip() or "bwapi",
+            token=v.get("API_TOKEN", "").strip(),
+            timeout=60,
+        )
+        if code != 503 or time.monotonic() >= deadline:
+            break
+        print("Another reload or a configuration generation is in progress, waiting ...", file=sys.stderr)
+        time.sleep(3)
     print(body.strip())
+    if code == 503 and RELOAD_MARKER.exists():
+        age = time.time() - RELOAD_MARKER.stat().st_mtime
+        print(f"{RELOAD_MARKER} is {age:.0f}s old (BunkerWeb clears it itself after five minutes; Restart-Service bunkerweb-nginx clears it at once).", file=sys.stderr)
     try:
         return 0 if code == 200 and json.loads(body).get("status") == "success" else 1
     except ValueError:

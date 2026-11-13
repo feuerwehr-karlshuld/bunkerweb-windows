@@ -1,0 +1,39 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: BunkerWeb Windows port <bunkerweb-windows@users.noreply.invalid>
+Date: Fri, 13 Nov 2026 23:52:02 +0100
+Subject: [PATCH] Templator: load the shipped libssl for the ssl_ecdh_curve
+ probe
+
+The ssl_ecdh_curve probe binds libssl through find_library("ssl") / libssl.so.*, none of which exist on Windows, so every
+generator run logged "could not bind libssl for the faithful set1_groups_list probe" and fell back to the FIPS-blind
+check. The port ships MSYS2's libssl-3-x64.dll (the same OpenSSL that is linked into nginx.exe) in usr/sbin. It is loaded
+by absolute path with LOAD_WITH_ALTERED_SEARCH_PATH (8) so that libcrypto and the DLLs next to it are found. The path is
+already the final one (pathrewrite does not touch usr/sbin); on Linux the glob matches nothing.
+
+Upstream: none, Windows specific
+Check: the generator logs no "could not bind libssl" warning without this patch (e.g. upstream probes a bundled libssl)
+
+diff --git a/common/gen/Templator.py b/common/gen/Templator.py
+index e3bd6b7..0b991f3 100644
+--- a/common/gen/Templator.py
++++ b/common/gen/Templator.py
+@@ -46,11 +46,17 @@ def _set1_groups_list_probe():
+         # find_library() returns None on musl/Alpine and slim images often lack the unversioned
+         # libssl.so, so try the versioned sonames too.
+         lib = None
+-        for _cand in (find_library("ssl"), "libssl.so.3", "libssl.so", "libssl.so.1.1"):
++        for _cand in (
++            *(__import__("os").path.abspath(_p) for _p in glob("/bunkerweb/usr/sbin/libssl-3*.dll")),
++            find_library("ssl"),
++            "libssl.so.3",
++            "libssl.so",
++            "libssl.so.1.1",
++        ):
+             if not _cand:
+                 continue
+             try:
+-                lib = CDLL(_cand)
++                lib = CDLL(_cand, winmode=8) if __import__("sys").platform == "win32" else CDLL(_cand)
+                 break
+             except OSError:
+                 continue

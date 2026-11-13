@@ -1,0 +1,25 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: BunkerWeb Windows port <bunkerweb-windows@users.noreply.invalid>
+Date: Sat, 1 Jan 2000 00:00:00 +0000
+Subject: [PATCH] modsecurity-nginx: always use the empty dd() debug macro
+
+nginx for Windows does not define NGX_HAVE_VARIADIC_MACROS, so the non-debug dd() becomes a real function whose
+arguments are still compiled, and one of them (clcf) only exists in debug builds. GCC has variadic macros: use the
+empty macro unconditionally.
+
+Upstream: none yet, could be proposed to owasp-modsecurity/ModSecurity-nginx (nginx's win32 build lacks the macro)
+Check: the native build compiles ngx_http_modsecurity_module.c without this patch
+
+diff --git a/deps/src/modsecurity-nginx/src/ddebug.h b/deps/src/modsecurity-nginx/src/ddebug.h
+index 9785421..2c9582c 100644
+--- a/deps/src/modsecurity-nginx/src/ddebug.h
++++ b/deps/src/modsecurity-nginx/src/ddebug.h
+@@ -52,7 +52,7 @@ static void dd(const char *fmt, ...) {
+ 
+ #else
+ 
+-#   if (NGX_HAVE_VARIADIC_MACROS)
++#   if 1 /* Windows port: NGX_HAVE_VARIADIC_MACROS is not defined on win32 */
+ 
+ #       define dd(...)
+ 

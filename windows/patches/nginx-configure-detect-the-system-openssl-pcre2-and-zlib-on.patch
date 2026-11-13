@@ -1,0 +1,54 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: BunkerWeb Windows port <bunkerweb-windows@users.noreply.invalid>
+Date: Sat, 1 Jan 2000 00:00:00 +0000
+Subject: [PATCH] nginx configure: detect the system OpenSSL, PCRE2 and zlib on
+ win32
+
+nginx's configure skips the detection of system libraries on win32 because it expects source trees there (it is built
+with MSVC and nmake upstream). The port builds nginx with MSYS2/GCC against the MSYS2 packages, where the Unix style
+detection works fine, so the win32 exceptions are removed.
+
+Upstream: none, Windows specific (nginx's own win32 build uses source trees)
+Check: the native build still passes without this patch (configure finds OpenSSL/PCRE2/zlib on its own)
+
+diff --git a/deps/src/nginx/auto/lib/openssl/conf b/deps/src/nginx/auto/lib/openssl/conf
+index 3068cae..f7051cb 100644
+--- a/deps/src/nginx/auto/lib/openssl/conf
++++ b/deps/src/nginx/auto/lib/openssl/conf
+@@ -54,7 +54,7 @@ if [ $OPENSSL != NONE ]; then
+ 
+ else
+ 
+-    if [ "$NGX_PLATFORM" != win32 ]; then
++    if true; then
+ 
+         OPENSSL=NO
+ 
+diff --git a/deps/src/nginx/auto/lib/pcre/conf b/deps/src/nginx/auto/lib/pcre/conf
+index cdf1809..89b47b5 100644
+--- a/deps/src/nginx/auto/lib/pcre/conf
++++ b/deps/src/nginx/auto/lib/pcre/conf
+@@ -68,9 +68,7 @@ if [ $PCRE != NONE ]; then
+ 
+ else
+ 
+-    if [ "$NGX_PLATFORM" != win32 ]; then
+-        PCRE=NO
+-    fi
++    PCRE=NO
+ 
+     if [ $PCRE = NO -a $PCRE2 != DISABLED ]; then
+ 
+diff --git a/deps/src/nginx/auto/lib/zlib/conf b/deps/src/nginx/auto/lib/zlib/conf
+index 239592e..0a5a0fe 100644
+--- a/deps/src/nginx/auto/lib/zlib/conf
++++ b/deps/src/nginx/auto/lib/zlib/conf
+@@ -42,7 +42,7 @@ if [ $ZLIB != NONE ]; then
+ 
+ else
+ 
+-    if [ "$NGX_PLATFORM" != win32 ]; then
++    if true; then
+         ZLIB=NO
+ 
+         # FreeBSD, Solaris, Linux

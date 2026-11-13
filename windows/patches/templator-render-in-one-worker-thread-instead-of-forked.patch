@@ -1,0 +1,43 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: BunkerWeb Windows port <bunkerweb-windows@users.noreply.invalid>
+Date: Sat, 1 Jan 2000 00:00:00 +0000
+Subject: [PATCH] Templator: render in one worker thread instead of forked
+ processes
+
+Templator.render() forces the "fork" multiprocessing start method (so children inherit globals) and renders the
+servers in a ProcessPoolExecutor. Windows only has "spawn", which would have to pickle the Templator and re-import
+the generator in every child (and ValueError: cannot find context for 'fork' otherwise). The rendering is a few Jinja
+templates per server, so it is done in a single worker thread.
+
+Upstream: none, Windows specific (no fork); a spawn-safe Templator would remove the need
+Check: Templator.render() no longer calls _ensure_fork_start_method() / uses a ProcessPoolExecutor
+
+diff --git a/common/gen/Templator.py b/common/gen/Templator.py
+index 7322cee..e3bd6b7 100644
+--- a/common/gen/Templator.py
++++ b/common/gen/Templator.py
+@@ -1,6 +1,6 @@
+ #!/usr/bin/env python3
+ 
+-from concurrent.futures import ProcessPoolExecutor, as_completed
++from concurrent.futures import ThreadPoolExecutor, as_completed
+ from contextlib import suppress
+ from ctypes import CDLL, c_char_p, c_int, c_long, c_void_p
+ from ctypes.util import find_library
+@@ -453,7 +453,6 @@ class Templator:
+         """
+         global _ssl_ecdh_curve_resolution_logged
+ 
+-        _ensure_fork_start_method()
+         _ssl_ecdh_curve_resolution_logged = False
+         if self._uses_auto_ssl_ecdh_curve():
+             resolve_ssl_ecdh_curve("auto")
+@@ -473,7 +472,7 @@ class Templator:
+         batch_size = max(1, ceil(len(servers) / max_workers))
+ 
+         server_start = perf_counter()
+-        with ProcessPoolExecutor(max_workers=max_workers) as executor:
++        with ThreadPoolExecutor(max_workers=1) as executor:
+             future_to_batch = {}
+             for i in range(0, len(servers), batch_size):
+                 batch = servers[i : i + batch_size]  # noqa: E203

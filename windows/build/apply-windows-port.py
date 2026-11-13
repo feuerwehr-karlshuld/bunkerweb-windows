@@ -96,6 +96,25 @@ for rel in (
 if total == 0:
     errors.append("no reuseport occurrence removed")
 
+# ---------------------------------------------------------------- 3b. configurable health check port
+# Upstream hardcodes 127.0.0.1:6000 for the health check server (healthcheck.conf is a global Jinja template).
+# Make it a regular global setting so that every port of the port can be chosen in variables.env
+# (HEALTHCHECK_PORT, default 6000 = unchanged behaviour). bwsvc.py and bwctl.py read the same value.
+rep("common/confs/healthcheck.conf", "listen 127.0.0.1:6000;", "listen 127.0.0.1:{{ HEALTHCHECK_PORT }};", 1)
+insert_after(
+    "common/settings.json",
+    '    "id": "api-https-listen",\n    "label": "API HTTPS port number",\n    "regex": "^\\\\d+$",\n    "type": "number"\n  },\n',
+    '  "HEALTHCHECK_PORT": {\n'
+    '    "context": "global",\n'
+    '    "default": "6000",\n'
+    '    "help": "Listen port number (127.0.0.1 only) of the health check server (/healthz).",\n'
+    '    "id": "healthcheck-port",\n'
+    '    "label": "Health check port number",\n'
+    '    "regex": "^\\\\d+$",\n'
+    '    "type": "number"\n'
+    "  },\n",
+)
+
 # ---------------------------------------------------------------- 4. load the Windows shim first
 for rel in ("common/confs/init-lua.conf", "common/confs/init-stream-lua.conf"):
     rep(rel, "init_by_lua_block {\n", 'init_by_lua_block {\n\trequire "bunkerweb.wincompat"\n', 1)

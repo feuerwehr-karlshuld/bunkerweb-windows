@@ -37,8 +37,8 @@ AppName=BunkerWeb for Windows
 AppVersion={#AppVersion}-win{#PortRevision}
 AppVerName=BunkerWeb {#AppVersion} for Windows (port revision {#PortRevision})
 AppPublisher=Unofficial Windows port of BunkerWeb (Bunkerity)
-AppPublisherURL=https://github.com/feuerwehr-karlshuld/reverse-proxy
-AppSupportURL=https://github.com/feuerwehr-karlshuld/reverse-proxy
+AppPublisherURL=https://github.com/feuerwehr-karlshuld/bunkerweb-windows
+AppSupportURL=https://github.com/feuerwehr-karlshuld/bunkerweb-windows
 AppComments=BunkerWeb is developed by Bunkerity (https://github.com/bunkerity/bunkerweb) and licensed under the AGPLv3.
 VersionInfoVersion={#AppVersion}.{#PortRevision}
 DefaultDirName={#BW}
@@ -70,8 +70,8 @@ WelcomeLabel2=This will install BunkerWeb [ver] on your server as native Windows
 
 [Tasks]
 Name: "startservices"; Description: "Start the BunkerWeb services after installation"
-Name: "webui"; Description: "Enable the web UI service (listens on 127.0.0.1:7000)"
-Name: "firewall"; Description: "Allow inbound HTTP/HTTPS (TCP 80, 443) in Windows Firewall"
+Name: "webui"; Description: "Enable the web UI service (listens on 127.0.0.1, port 7000 unless UI_HOST in variables.env says otherwise)"
+Name: "firewall"; Description: "Allow inbound HTTP/HTTPS (HTTP_PORT/HTTPS_PORT from variables.env, default TCP 80, 443) in Windows Firewall"
 
 [Dirs]
 Name: "C:\bunkerweb\etc\bunkerweb"; Flags: uninsneveruninstall
@@ -184,8 +184,12 @@ begin
     RunPS('Set-Service bunkerweb-ui -StartupType Disabled');
 
   if WizardIsTaskSelected('firewall') then
-    RunPS('Remove-NetFirewallRule -Group ''BunkerWeb'' -ErrorAction SilentlyContinue; ' +
-          'New-NetFirewallRule -Group ''BunkerWeb'' -DisplayName ''BunkerWeb HTTP/HTTPS'' -Direction Inbound -Protocol TCP -LocalPort 80,443 -Action Allow -Profile Any | Out-Null');
+  begin
+    // ports come from variables.env (kept on upgrade, or pre-seeded); defaults 80/443 without one
+    if not Exec(ExpandConstant('{sys}\cmd.exe'), '/c C:\bunkerweb\usr\bin\bwctl.cmd firewall', 'C:\bunkerweb', SW_HIDE, ewWaitUntilTerminated, Code) or (Code <> 0) then
+      RunPS('Remove-NetFirewallRule -Group ''BunkerWeb'' -ErrorAction SilentlyContinue; ' +
+            'New-NetFirewallRule -Group ''BunkerWeb'' -DisplayName ''BunkerWeb HTTP/HTTPS'' -Direction Inbound -Protocol TCP -LocalPort 80,443 -Action Allow -Profile Any | Out-Null');
+  end;
 
   if WizardIsTaskSelected('startservices') then
   begin

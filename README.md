@@ -79,7 +79,7 @@ older nginx + win-acme setup that this replaces (section 4).
 Milestones, in order:
 
 1. **Green CI pipeline**: every job (modsecurity, native, python, package, smoke-test) passes on `windows-2022`.
-2. **First release** `v1.6.17-win1`, published automatically once the smoke test passes.
+2. **First release** `v1.6.17`, published automatically once the smoke test passes (a failing smoke test only produces the draft `v1.6.17-RC`).
 3. **Trial on a non-critical server**: install, Let's Encrypt *staging* end to end, a few real backends, reboot and upgrade tests.
 4. **Production cutover** following [section 4](#4-migrating-from-the-existing-nginx--win-acme-setup), with rollback ready.
 5. **Routine upgrades** to new BunkerWeb releases ([section 11.5](#115-upgrading-bunkerweb)).
@@ -140,16 +140,25 @@ BunkerWeb runs exactly as in its Linux integration, but as Windows services:
 
 Ports:
 
-| Port | Bound to | Used by |
-|---|---|---|
-| 80/tcp, 443/tcp | all interfaces | Public HTTP/HTTPS. Port 80 is also required for the HTTP-01 challenge |
-| 5000/tcp | 127.0.0.1 | Internal API (scheduler → nginx: reloads, Let's Encrypt tokens) |
-| 6000/tcp | 127.0.0.1 | nginx health check (`/healthz`) |
-| 7000/tcp | 127.0.0.1 | Web UI |
-| 8888/tcp | 127.0.0.1 | REST API service (only when `bunkerweb-api` is started) |
+| Port (default) | Bound to | Setting | Used by |
+|---|---|---|---|
+| 80/tcp | all interfaces | `HTTP_PORT` (`variables.env`) | Public HTTP. Let's Encrypt's HTTP-01 challenge always arrives on public port 80 (see below) |
+| 443/tcp | all interfaces | `HTTPS_PORT` (`variables.env`) | Public HTTPS |
+| 5000/tcp | `API_LISTEN_IP`, 127.0.0.1 | `API_HTTP_PORT` (`variables.env`) | Internal API (scheduler → nginx: reloads, Let's Encrypt tokens) |
+| 6000/tcp | 127.0.0.1 | `HEALTHCHECK_PORT` (`variables.env`) | nginx health check (`/healthz`) |
+| 7000/tcp | 127.0.0.1 | port of `UI_HOST` (`variables.env`) | Web UI |
+| 8888/tcp | 127.0.0.1 | `LISTEN_PORT` (`api.env`) | REST API service (only when `bunkerweb-api` is started) |
 
-> Local backends must **not** use the ports 5000, 6000, 7000 or 8888 (or 80/443). If one does, move the backend, or change
-> `API_HTTP_PORT` (variables.env) or `LISTEN_PORT` (ui.env).
+All of these can be changed in `variables.env`; apply with `bwctl restart` (section 6.5) and, for `HTTP_PORT`/`HTTPS_PORT`,
+re-sync the firewall rule with `bwctl firewall` (it opens exactly the configured two ports; the installer does the same).
+
+- The web UI port is the port in `UI_HOST` (default `http://127.0.0.1:7000`): `UI_HOST=http://127.0.0.1:7100` makes the UI
+  service listen on 7100 *and* makes BunkerWeb proxy to it. An explicit `UI_LISTEN_PORT`/`LISTEN_PORT` in `ui.env` takes
+  precedence for the listener, in which case `UI_HOST` must be changed to match.
+- If `HTTP_PORT` is not 80, Let's Encrypt (HTTP-01) still connects to port 80 of the public IP: forward public 80 to
+  `HTTP_PORT` on your router (and public 443 to `HTTPS_PORT`).
+
+> Local backends must **not** use the ports above. If one does, move the backend, or change the port in `variables.env`.
 
 Everything lives below one root folder, `C:\bunkerweb\`, which mirrors the Linux layout. BunkerWeb's own absolute paths such as
 `/etc/bunkerweb` are rewritten at build time to `/bunkerweb/etc/bunkerweb`, which Windows resolves to `C:\bunkerweb\etc\bunkerweb`.
@@ -208,9 +217,11 @@ Edit files there from an **elevated** PowerShell or editor.
 The installer is produced by the GitHub Actions workflow
 [`.github/workflows/bunkerweb-windows.yml`](.github/workflows/bunkerweb-windows.yml) in this repository:
 
-- **Releases** (recommended): tags like `v1.6.17-win1` publish `bunkerweb-1.6.17-win1-x64-setup.exe` and `SHA256SUMS.txt` on the
-  repository's *Releases* page. A release is only created when the automated smoke test (install → proxy request →
-  reload → restart → uninstall) has passed. *(No release exists until the pipeline is green, see [project status](#project-status).)*
+- **Releases** (recommended): the release is named after the BunkerWeb version it contains (tag `v1.6.17`) and carries
+  `bunkerweb-1.6.17-win1-x64-setup.exe` and `SHA256SUMS.txt` on the repository's *Releases* page. A newer build of the same
+  BunkerWeb version replaces it. A release is only created when the automated smoke test (install → proxy request →
+  reload → restart → uninstall) has passed; a failed smoke test only yields a *draft* `-RC` release (visible to maintainers
+  only), which must not be used. *(No release exists until the pipeline is green, see [project status](#project-status).)*
 - **CI builds**: *Actions* → *BunkerWeb for Windows* → a successful run → artifact `installer`. To build on demand, use
   *Run workflow* (`workflow_dispatch`).
 
@@ -237,18 +248,18 @@ before BunkerWeb starts. Leave it **installed but disabled**, so you can roll ba
 ### 4.1 Before the cutover
 
 1. Write the new `variables.env` (section 6) with the same hostnames and backends as the old vhosts.
-   For example, the old vhost `alamos.feuerwehr-karlshuld.de → 127.0.0.1:83` becomes:
+   For example, the old vhost `app.example.com → 127.0.0.1:83` becomes:
 
    ```ini
-   SERVER_NAME=alamos.feuerwehr-karlshuld.de
-   alamos.feuerwehr-karlshuld.de_USE_REVERSE_PROXY=yes
-   alamos.feuerwehr-karlshuld.de_REVERSE_PROXY_URL=/
-   alamos.feuerwehr-karlshuld.de_REVERSE_PROXY_HOST=http://127.0.0.1:83
+   SERVER_NAME=app.example.com
+   app.example.com_USE_REVERSE_PROXY=yes
+   app.example.com_REVERSE_PROXY_URL=/
+   app.example.com_REVERSE_PROXY_HOST=http://127.0.0.1:83
    ```
 
 2. **Prove that port 80 is reachable from the internet.** The old setup used DNS-01, so this has never been tested.
    Use a phone on mobile data, or any external host:
-   `http://alamos.feuerwehr-karlshuld.de/` must reach the old nginx. A timeout means the router forward or the firewall is missing.
+   `http://app.example.com/` must reach the old nginx. A timeout means the router forward or the firewall is missing.
    Fix this first (section 8.2).
 3. Run the DNS checks from section 8.3 (no stray AAAA records, CAA allows Let's Encrypt).
 
@@ -301,7 +312,7 @@ Run the setup as Administrator. The wizard offers three tasks, all selected by d
 |---|---|
 | Start the BunkerWeb services after installation | Starts nginx, scheduler (and UI) at the end |
 | Enable the web UI service | Sets `bunkerweb-ui` to Automatic. Without it the UI service is Disabled |
-| Allow inbound HTTP/HTTPS in Windows Firewall | Creates the rule group **BunkerWeb** (TCP 80, 443, all profiles) |
+| Allow inbound HTTP/HTTPS in Windows Firewall | Creates the rule group **BunkerWeb** (TCP `HTTP_PORT` and `HTTPS_PORT` from an existing `variables.env`, otherwise 80 and 443; all profiles) |
 
 The installer also adds `C:\bunkerweb\usr\bin` to the system `PATH`, so `bwctl` and `bwcli` work in **new** shells.
 
@@ -415,7 +426,10 @@ WORKER_PROCESSES=1
 # internal API (scheduler -> nginx), loopback only
 API_LISTEN_IP=127.0.0.1
 API_HTTP_PORT=5000
-# address of the web UI service, used by the setup wizard and the "ui" template
+# health check endpoint, loopback only
+HEALTHCHECK_PORT=6000
+# address of the web UI service, used by the setup wizard and the "ui" template;
+# the UI service listens on the port of this URL
 UI_HOST=http://127.0.0.1:7000
 
 # unknown hostnames / direct IP access are dropped (444)
@@ -528,7 +542,7 @@ starting with a bare `/var/...` would resolve to `C:\var`, which BunkerWeb does 
 | Change | Apply with |
 |---|---|
 | Services, Let's Encrypt, security settings, snippets in `configs\` | `bwctl reload-scheduler` (no downtime) |
-| `HTTP_PORT`, `HTTPS_PORT`, `API_*`, `USE_REAL_IP`/`USE_PROXY_PROTOCOL` (global listen settings) | `bwctl restart` |
+| `HTTP_PORT`, `HTTPS_PORT`, `API_*`, `HEALTHCHECK_PORT`, the port of `UI_HOST`, `USE_REAL_IP`/`USE_PROXY_PROTOCOL` (global listen settings) | `bwctl restart` (after `HTTP_PORT`/`HTTPS_PORT`: also `bwctl firewall`) |
 | `C:\bunkerweb\etc\bunkerweb\scheduler.env` | `Restart-Service bunkerweb-scheduler` |
 | `C:\bunkerweb\etc\bunkerweb\ui.env` | `Restart-Service bunkerweb-ui` |
 
@@ -666,7 +680,7 @@ app.example.de_REVERSE_PROXY_HOST=http://127.0.0.1:83
   traffic is blocked by default unless a rule allows it.
 - IIS on the same server: move its bindings away from 80/443, e.g. to `127.0.0.1:8080`, and proxy to it. Also check that
   no http.sys URL reservation still holds port 80 (section 12.2).
-- Avoid the ports BunkerWeb uses internally (5000, 6000, 7000, 8888; see section 1).
+- Avoid the ports BunkerWeb uses (HTTP/HTTPS, 5000, 6000, 7000, 8888 by default; see section 1).
 
 ### 7.2 Applications on other LAN servers
 
@@ -729,7 +743,7 @@ BunkerWeb sends these headers to the backend by default:
 
 1. On the router, forward **80/tcp and 443/tcp** from the public IP to `192.168.1.50`. Remove any older forwards of these ports
    to other machines.
-2. Windows Firewall: the installer task *firewall* creates the rule group **BunkerWeb** (80, 443). Check it:
+2. Windows Firewall: the installer task *firewall* creates the rule group **BunkerWeb** (`HTTP_PORT`/`HTTPS_PORT`, 80 and 443 by default; `bwctl firewall` re-creates it after a port change). Check it:
    `Get-NetFirewallRule -Group BunkerWeb`.
 3. Port 80 must stay reachable **from the whole internet**:
    - no geo-blocking on 80, because Let's Encrypt validates from several continents;
@@ -862,7 +876,7 @@ before expiry. Check port 80, DNS and the Let's Encrypt logs.
 
 ### 9.1 Admin account
 
-The UI service listens on `127.0.0.1:7000`. There are two ways to create the first admin:
+The UI service listens on `127.0.0.1`, on the port of `UI_HOST` (7000 by default; the examples below use 7000). There are two ways to create the first admin:
 
 - **Wizard:** open the UI (9.2) and follow the setup wizard.
 - **Configuration file (recommended):** edit `C:\bunkerweb\etc\bunkerweb\ui.env` in an elevated editor and restart the UI:
@@ -994,6 +1008,7 @@ security checks.
 | Reload nginx with its current configuration | `bwctl reload` |
 | Test the generated nginx configuration | `bwctl test` |
 | Restart everything (in dependency order) | `bwctl restart` |
+| Re-create the firewall rule for `HTTP_PORT`/`HTTPS_PORT` | `bwctl firewall` |
 | Restart one service | `bwctl restart ui`, or `Restart-Service bunkerweb-ui` |
 | Stop everything | `Stop-Service bunkerweb-ui, bunkerweb-scheduler, bunkerweb-nginx` |
 | BunkerWeb CLI (bans, plugin commands) | `bwcli ...` |
@@ -1138,7 +1153,8 @@ Get-NetTCPConnection -State Listen -LocalPort 80, 443 | Select-Object LocalAddre
 
 The internal ports can collide too: some ranges are reserved by Hyper-V/WinNAT
 (`netsh interface ipv4 show excludedportrange protocol=tcp`). If 5000, 6000 or 7000 falls into such a range, change
-`API_HTTP_PORT` (variables.env) or `LISTEN_PORT` (ui.env).
+`API_HTTP_PORT`, `HEALTHCHECK_PORT` or the port of `UI_HOST` in variables.env (section 1). Moving `HTTP_PORT`/`HTTPS_PORT`
+away from 80/443 works the same way, but remember the router forward and `bwctl firewall`.
 
 ### 12.3 Symptom table
 

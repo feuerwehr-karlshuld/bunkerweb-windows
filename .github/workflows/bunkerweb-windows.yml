@@ -8,16 +8,24 @@
 #   python       private CPython + BunkerWeb Python dependencies
 #   package      staged C:\bunkerweb tree + Inno Setup installer
 #   smoke-test   installs the result on a clean runner and proxies a request through BunkerWeb
-#   release      tags v<bunkerweb-version>-win<N> (e.g. v1.6.17-win1) publish a GitHub release
+#   release      publishes the installer as a GitHub release named after the bunkerweb submodule version (main only):
+#                smoke-test green -> release + tag v<version> (e.g. v1.6.17), the latest release, replaces the previous one;
+#                smoke-test red   -> DRAFT release + tag v<version>-RC with installer and smoke-test logs, replaces only
+#                the previous draft. The two kinds never touch each other.
 #
 # See windows/README.md for the architecture of the port.
 #
-# Build caches: modsecurity, native and python each cache their output (actions/cache) under a key made of the
-# bunkerweb submodule commit, the files of this repository that influence that output and CACHE_VERSION. A run on an
-# unchanged source restores the output and skips the build; the artifact for the next job is still uploaded.
+# Build caches: modsecurity, native, python and package each cache their output (actions/cache restore + save) under a
+# key made of the bunkerweb submodule commit, the files of this repository that influence that output and CACHE_VERSION.
+# A run on an unchanged source restores the output and skips the build; the artifact for the next job is still uploaded.
+# The cache is saved right after a successful build, so it survives a failing artifact upload, a failing later job
+# (smoke-test) or a failing release. Only a failing or cancelled build itself leaves nothing behind (the conan
+# packages of the ModSecurity build are saved even then). package caches the finished installer (dist/), so a failing
+# smoke-test can be repeated without rebuilding it. smoke-test itself is never cached.
+# The workflow file is not part of any key: bump CACHE_VERSION when you change how a job builds (not for smoke-test edits).
 # Bump CACHE_VERSION to force fresh builds, e.g. when the runner image, the MSYS2 package list or an unpinned tool
 # (conan, pywin32, ...) should be picked up anew. Caches live 7 days without use and are shared between runs of the
-# same branch and the default branch (tag builds restore what main built).
+# same branch and the default branch.
 
 name: BunkerWeb for Windows
 
@@ -30,7 +38,7 @@ on:
         default: "1"
   push:
     branches: [main]
-    tags: ["v*"]
+
     paths:
       - "windows/**"
       - "bunkerweb"
@@ -50,7 +58,7 @@ permissions:
 
 concurrency:
   group: bunkerweb-windows-${{ github.ref }}
-  cancel-in-progress: ${{ !startsWith(github.ref, 'refs/tags/') }}
+  cancel-in-progress: true
 
 defaults:
   run:
@@ -94,7 +102,7 @@ jobs:
 
       - name: Restore libModSecurity from the build cache
         id: cache
-        uses: actions/cache@v6
+        uses: actions/cache/restore@v6
         with:
           path: build/modsecurity
           key: modsecurity-v${{ env.CACHE_VERSION }}-${{ steps.src.outputs.bunkerweb }}-${{ hashFiles('windows/build/apply-windows-port.py', 'windows/build/build-modsecurity.ps1', '.github/actions/prepare-src/action.yml') }}
@@ -111,9 +119,12 @@ jobs:
         if: steps.cache.outputs.cache-hit != 'true'
         run: python -m pip install --upgrade "conan>=2.27.1,<3"
 
-      - name: Cache conan packages
+      # restore here, save explicitly right after the build (below): the save must not depend on the later
+      # steps of this job (artifact upload) succeeding
+      - name: Restore conan packages
+        id: conan
         if: steps.cache.outputs.cache-hit != 'true'
-        uses: actions/cache@v6
+        uses: actions/cache/restore@v6
         with:
           path: ~/.conan2/p
           key: conan-msvc2022-${{ hashFiles('bunkerweb/src/deps/src/modsecurity/build/win32/conanfile.txt') }}
@@ -121,6 +132,22 @@ jobs:
       - name: Build libModSecurity.dll
         if: steps.cache.outputs.cache-hit != 'true'
         run: ./windows/build/build-modsecurity.ps1 -Src build/src -Out build/modsecurity
+
+      - name: Save libModSecurity to the build cache
+        if: steps.cache.outputs.cache-hit != 'true'
+        uses: actions/cache/save@v6
+        with:
+          path: build/modsecurity
+          key: ${{ steps.cache.outputs.cache-primary-key }}
+
+      # Compiling the conan dependencies takes about 20 minutes, so keep them even if the build step fails later
+      - name: Save conan packages
+        if: ${{ !cancelled() && steps.cache.outputs.cache-hit != 'true' && steps.conan.outputs.cache-hit != 'true' }}
+        continue-on-error: true
+        uses: actions/cache/save@v6
+        with:
+          path: ~/.conan2/p
+          key: ${{ steps.conan.outputs.cache-primary-key }}
 
       - uses: actions/upload-artifact@v7
         with:
@@ -154,7 +181,7 @@ jobs:
       # nginx links against libModSecurity, so the key also covers everything the modsecurity job depends on
       - name: Restore nginx and the Lua modules from the build cache
         id: cache
-        uses: actions/cache@v6
+        uses: actions/cache/restore@v6
         with:
           path: build/native
           key: native-v${{ env.CACHE_VERSION }}-${{ steps.src.outputs.bunkerweb }}-${{ hashFiles('windows/build/apply-windows-port.py', 'windows/build/build-modsecurity.ps1', 'windows/build/build-native.sh', 'windows/overlay/src/**', '.github/actions/prepare-src/action.yml') }}
@@ -196,6 +223,13 @@ jobs:
         shell: msys2 {0}
         run: bash windows/build/build-native.sh build/src build/modsecurity build/native
 
+      - name: Save nginx and the Lua modules to the build cache
+        if: steps.cache.outputs.cache-hit != 'true'
+        uses: actions/cache/save@v6
+        with:
+          path: build/native
+          key: ${{ steps.cache.outputs.cache-primary-key }}
+
       - uses: actions/upload-artifact@v7
         with:
           name: native
@@ -232,7 +266,7 @@ jobs:
       # the output contains a copy of the runner's CPython, so the exact patch version is part of the key
       - name: Restore the Python runtime from the build cache
         id: cache
-        uses: actions/cache@v6
+        uses: actions/cache/restore@v6
         with:
           path: build/python
           key: python-v${{ env.CACHE_VERSION }}-${{ steps.py.outputs.python-version }}-${{ steps.src.outputs.bunkerweb }}-${{ hashFiles('windows/build/build-python.ps1', 'windows/build/prepare-requirements.py', 'windows/overlay/python-site/**') }}
@@ -244,6 +278,13 @@ jobs:
       - name: Build the Python runtime and dependencies
         if: steps.cache.outputs.cache-hit != 'true'
         run: ./windows/build/build-python.ps1 -Src build/src -Windows windows -Out build/python
+
+      - name: Save the Python runtime to the build cache
+        if: steps.cache.outputs.cache-hit != 'true'
+        uses: actions/cache/save@v6
+        with:
+          path: build/python
+          key: ${{ steps.cache.outputs.cache-primary-key }}
 
       - uses: actions/upload-artifact@v7
         with:
@@ -271,10 +312,9 @@ jobs:
           submodules: true
 
       - uses: actions/setup-python@v7
+        id: py
         with:
           python-version: ${{ env.PYTHON_VERSION }}
-
-      - uses: ./.github/actions/prepare-src
 
       - name: Version
         id: version
@@ -282,30 +322,46 @@ jobs:
           INPUT_REVISION: ${{ inputs.port_revision }}
         run: |
           $version = (Get-Content bunkerweb/src/VERSION -Raw).Trim()
-          $revision = '0'
-          if ($env:GITHUB_REF_TYPE -eq 'tag') {
-            if ($env:GITHUB_REF_NAME -notmatch '^v(.+)-win(\d+)$') { throw "Release tags must look like v$version-win1 (got $env:GITHUB_REF_NAME)" }
-            if ($Matches[1] -ne $version) { throw "Tag $env:GITHUB_REF_NAME does not match the BunkerWeb submodule version $version" }
-            $revision = $Matches[2]
-          } elseif ($env:INPUT_REVISION) {
+          $revision = '1'
+          if ($env:INPUT_REVISION) {
             if ($env:INPUT_REVISION -notmatch '^\d+$') { throw "port_revision must be a number" }
             $revision = $env:INPUT_REVISION
           }
           "version=$version" >> $env:GITHUB_OUTPUT
           "revision=$revision" >> $env:GITHUB_OUTPUT
           Write-Host "BunkerWeb $version, Windows port revision $revision"
+          $sha = (git rev-parse HEAD:bunkerweb).Trim()
+          "bunkerweb=$sha" >> $env:GITHUB_OUTPUT
+          Write-Host "bunkerweb submodule commit: $sha"
+
+      # The installer embeds the revision, everything under windows/ (build scripts, overlay, installer script, service
+      # definitions) and the pinned tools. The native and python outputs are covered by the same inputs. Changing the
+      # package/smoke-test steps of this workflow does not invalidate it: bump CACHE_VERSION if the way the installer
+      # is built (stage/ISCC invocation, tool downloads) changes.
+      - name: Restore the installer from the build cache
+        id: cache
+        uses: actions/cache/restore@v6
+        with:
+          path: dist
+          key: package-v${{ env.CACHE_VERSION }}-${{ steps.version.outputs.version }}-win${{ steps.version.outputs.revision }}-${{ steps.version.outputs.bunkerweb }}-py${{ steps.py.outputs.python-version }}-${{ env.BUSYBOX_SHA256 }}-${{ env.WINSW_SHA256 }}-${{ hashFiles('windows/**', '.github/actions/**') }}
+
+      - uses: ./.github/actions/prepare-src
+        if: steps.cache.outputs.cache-hit != 'true'
 
       - uses: actions/download-artifact@v8
+        if: steps.cache.outputs.cache-hit != 'true'
         with:
           name: native
           path: build/native
 
       - uses: actions/download-artifact@v8
+        if: steps.cache.outputs.cache-hit != 'true'
         with:
           name: python
           path: build/python
 
       - name: Download busybox-w32 and WinSW (pinned by SHA-256)
+        if: steps.cache.outputs.cache-hit != 'true'
         run: |
           New-Item -ItemType Directory -Force build/tools | Out-Null
 
@@ -341,6 +397,7 @@ jobs:
           Write-Host "${winsw}: $(Get-Sha256 $winsw)"
 
       - name: Stage the C:\bunkerweb tree
+        if: steps.cache.outputs.cache-hit != 'true'
         run: >-
           ./windows/build/stage.ps1
           -Repo bunkerweb
@@ -353,6 +410,7 @@ jobs:
           -Out build/stage
 
       - name: Build the installer (Inno Setup 6)
+        if: steps.cache.outputs.cache-hit != 'true'
         run: |
           $iscc = Join-Path ${env:ProgramFiles(x86)} 'Inno Setup 6\ISCC.exe'
           if (-not (Test-Path $iscc)) {
@@ -375,6 +433,13 @@ jobs:
           Get-Content SHA256SUMS.txt
           Pop-Location
 
+      - name: Save the installer to the build cache
+        if: steps.cache.outputs.cache-hit != 'true'
+        uses: actions/cache/save@v6
+        with:
+          path: dist
+          key: ${{ steps.cache.outputs.cache-primary-key }}
+
       - uses: actions/upload-artifact@v7
         with:
           name: installer
@@ -382,8 +447,10 @@ jobs:
           if-no-files-found: error
           compression-level: 0
 
-      # the staged tree is handy to inspect a build without installing it
+      # the staged tree is handy to inspect a build without installing it (not available when the installer
+      # came from the build cache)
       - uses: actions/upload-artifact@v7
+        if: steps.cache.outputs.cache-hit != 'true'
         with:
           name: stage
           path: build/stage
@@ -408,19 +475,40 @@ jobs:
         with:
           python-version: "3.12"
 
-      - name: Nothing may listen on 80/443 before the installation
+      # No port number is assumed anywhere in this job: every port (BunkerWeb's and the backend's) is picked here
+      # and handed to the following steps as an environment variable.
+      - name: Pick free TCP ports
         run: |
-          $busy = Get-NetTCPConnection -State Listen -ErrorAction SilentlyContinue | Where-Object LocalPort -in 80, 443
-          if ($busy) { $busy | Format-Table; throw 'Ports 80/443 are already in use on the runner' }
+          # random ports below the Windows dynamic range (49152+); each one is test-bound on all interfaces
+          $picked = [System.Collections.Generic.List[int]]::new()
+          function Get-FreePort {
+            for ($i = 0; $i -lt 500; $i++) {
+              $port = Get-Random -Minimum 20000 -Maximum 30000
+              if ($picked.Contains($port)) { continue }
+              $listener = [System.Net.Sockets.TcpListener]::new([System.Net.IPAddress]::Any, $port)
+              try {
+                $listener.Start()
+                $listener.Stop()
+                $picked.Add($port)
+                return $port
+              } catch { Write-Host "port $port is not usable: $($_.Exception.Message)" }
+            }
+            throw 'No free TCP port found'
+          }
+          foreach ($name in 'BW_HTTP_PORT', 'BW_HTTPS_PORT', 'BW_UI_PORT', 'BW_API_PORT', 'BW_HEALTH_PORT', 'BACKEND_PORT') {
+            $port = Get-FreePort
+            Write-Host "$name=$port"
+            "$name=$port" | Add-Content -Encoding ascii $env:GITHUB_ENV
+          }
 
-      - name: Start a test backend on 127.0.0.1:8081
+      - name: Start a test backend on a free port (127.0.0.1)
         run: |
           New-Item -ItemType Directory -Force C:\smoke-backend | Out-Null
           Set-Content -Encoding ascii C:\smoke-backend\index.html $env:MARKER
           Start-Process -WindowStyle Hidden -FilePath (Get-Command python).Source `
-            -ArgumentList '-m', 'http.server', '8081', '--bind', '127.0.0.1', '--directory', 'C:\smoke-backend'
+            -ArgumentList '-m', 'http.server', $env:BACKEND_PORT, '--bind', '127.0.0.1', '--directory', 'C:\smoke-backend'
           Start-Sleep -Seconds 2
-          (Invoke-WebRequest -UseBasicParsing http://127.0.0.1:8081/).Content
+          (Invoke-WebRequest -UseBasicParsing "http://127.0.0.1:$env:BACKEND_PORT/").Content
 
       - name: Pre-seed C:\bunkerweb\etc\bunkerweb\variables.env (configuration as code)
         run: |
@@ -429,15 +517,17 @@ jobs:
             "SERVER_NAME=$env:SITE"
             'MULTISITE=yes'
             'WORKER_PROCESSES=1'
-            'HTTP_PORT=80'
-            'HTTPS_PORT=443'
+            "HTTP_PORT=$env:BW_HTTP_PORT"
+            "HTTPS_PORT=$env:BW_HTTPS_PORT"
             'API_LISTEN_IP=127.0.0.1'
-            'UI_HOST=http://127.0.0.1:7000'
+            "API_HTTP_PORT=$env:BW_API_PORT"
+            "HEALTHCHECK_PORT=$env:BW_HEALTH_PORT"
+            "UI_HOST=http://127.0.0.1:$env:BW_UI_PORT"
             'USE_BUNKERNET=no'
             'SEND_ANONYMOUS_REPORT=no'
             "${env:SITE}_USE_REVERSE_PROXY=yes"
             "${env:SITE}_REVERSE_PROXY_URL=/"
-            "${env:SITE}_REVERSE_PROXY_HOST=http://127.0.0.1:8081"
+            "${env:SITE}_REVERSE_PROXY_HOST=http://127.0.0.1:$env:BACKEND_PORT"
           ) | Set-Content -Encoding ascii C:\bunkerweb\etc\bunkerweb\variables.env
           Get-Content C:\bunkerweb\etc\bunkerweb\variables.env
 
@@ -469,7 +559,7 @@ jobs:
           $healthy = $false
           do {
             try {
-              $r = Invoke-WebRequest -UseBasicParsing -TimeoutSec 5 -Headers @{ Host = 'healthcheck.bunkerweb.io' } http://127.0.0.1:6000/healthz
+              $r = Invoke-WebRequest -UseBasicParsing -TimeoutSec 5 -Headers @{ Host = 'healthcheck.bunkerweb.io' } "http://127.0.0.1:$env:BW_HEALTH_PORT/healthz"
               Write-Host "healthz: $($r.Content.Trim())"
               if ($r.Content.Trim() -eq 'ok') { $healthy = $true; break }
             } catch { Write-Host "healthz: $($_.Exception.Message)" }
@@ -477,13 +567,28 @@ jobs:
           } while ((Get-Date) -lt $deadline)
           if (-not $healthy) { throw 'nginx did not become healthy (still loading?)' }
 
+      - name: Windows Firewall rule and listeners use the configured ports
+        run: |
+          $rulePorts = Get-NetFirewallRule -Group BunkerWeb | Get-NetFirewallPortFilter | ForEach-Object { $_.LocalPort }
+          Write-Host "Firewall rule ports: $($rulePorts -join ', ')"
+          foreach ($p in $env:BW_HTTP_PORT, $env:BW_HTTPS_PORT) {
+            if ($p -notin $rulePorts) { throw "Firewall rule does not allow TCP $p" }
+          }
+          if ($rulePorts -contains '80' -or $rulePorts -contains '443') { throw 'Firewall rule still contains the default ports 80/443' }
+          $listening = Get-NetTCPConnection -State Listen | ForEach-Object { [string]$_.LocalPort } | Sort-Object -Unique
+          foreach ($name in 'BW_HTTP_PORT', 'BW_HTTPS_PORT', 'BW_UI_PORT', 'BW_API_PORT', 'BW_HEALTH_PORT') {
+            $p = [Environment]::GetEnvironmentVariable($name)
+            if ($p -notin $listening) { throw "Nothing listens on $name=$p" }
+            Write-Host "$name=$p is listening"
+          }
+
       - name: Reverse proxy to the backend works
         run: |
           $deadline = (Get-Date).AddMinutes(5)
           $ok = $false
           do {
             try {
-              $r = Invoke-WebRequest -UseBasicParsing -TimeoutSec 10 -SkipHttpErrorCheck -UserAgent $env:UA -Headers @{ Host = $env:SITE } http://127.0.0.1/
+              $r = Invoke-WebRequest -UseBasicParsing -TimeoutSec 10 -SkipHttpErrorCheck -UserAgent $env:UA -Headers @{ Host = $env:SITE } "http://127.0.0.1:$env:BW_HTTP_PORT/"
               $body = "$($r.Content)".Trim()
               Write-Host "HTTP $($r.StatusCode): $($body.Substring(0, [Math]::Min(120, $body.Length)))"
               if ($r.StatusCode -eq 200 -and $body -like "*$env:MARKER*") { $ok = $true; break }
@@ -496,7 +601,7 @@ jobs:
 
       - name: Unknown hosts are rejected by the default server
         run: |
-          $r = Invoke-WebRequest -UseBasicParsing -TimeoutSec 10 -SkipHttpErrorCheck -UserAgent $env:UA -Headers @{ Host = 'unknown.smoke.test' } http://127.0.0.1/
+          $r = Invoke-WebRequest -UseBasicParsing -TimeoutSec 10 -SkipHttpErrorCheck -UserAgent $env:UA -Headers @{ Host = 'unknown.smoke.test' } "http://127.0.0.1:$env:BW_HTTP_PORT/"
           Write-Host "HTTP $($r.StatusCode)"
           if ($r.StatusCode -eq 200 -and "$($r.Content)" -like "*$env:MARKER*") { throw 'The default server proxied an unknown host' }
 
@@ -511,16 +616,16 @@ jobs:
           C:\bunkerweb\usr\bin\bwctl.cmd reload-scheduler
           if ($LASTEXITCODE -ne 0) { throw 'bwctl reload-scheduler failed' }
           Start-Sleep -Seconds 30
-          $r = Invoke-WebRequest -UseBasicParsing -TimeoutSec 10 -SkipHttpErrorCheck -UserAgent $env:UA -Headers @{ Host = $env:SITE } http://127.0.0.1/
+          $r = Invoke-WebRequest -UseBasicParsing -TimeoutSec 10 -SkipHttpErrorCheck -UserAgent $env:UA -Headers @{ Host = $env:SITE } "http://127.0.0.1:$env:BW_HTTP_PORT/"
           if ($r.StatusCode -ne 200) { throw "Site broken after reload (HTTP $($r.StatusCode))" }
 
-      - name: Web UI answers on 127.0.0.1:7000
+      - name: Web UI answers on its configured port
         run: |
           $deadline = (Get-Date).AddMinutes(3)
           $code = 0
           do {
             try {
-              $r = Invoke-WebRequest -UseBasicParsing -TimeoutSec 10 -SkipHttpErrorCheck -MaximumRedirection 0 http://127.0.0.1:7000/
+              $r = Invoke-WebRequest -UseBasicParsing -TimeoutSec 10 -SkipHttpErrorCheck -MaximumRedirection 0 "http://127.0.0.1:$env:BW_UI_PORT/"
               $code = [int]$r.StatusCode
               Write-Host "UI: HTTP $code"
             } catch { Write-Host "UI: $($_.Exception.Message)" }
@@ -538,7 +643,7 @@ jobs:
           $code = 0
           do {
             try {
-              $code = [int](Invoke-WebRequest -UseBasicParsing -TimeoutSec 10 -SkipHttpErrorCheck -UserAgent $env:UA -Headers @{ Host = $env:SITE } http://127.0.0.1/).StatusCode
+              $code = [int](Invoke-WebRequest -UseBasicParsing -TimeoutSec 10 -SkipHttpErrorCheck -UserAgent $env:UA -Headers @{ Host = $env:SITE } "http://127.0.0.1:$env:BW_HTTP_PORT/").StatusCode
               Write-Host "HTTP $code"
             } catch { Write-Host $_.Exception.Message }
             if ($code -eq 200) { break }
@@ -550,7 +655,7 @@ jobs:
         if: always()
         run: |
           Get-Service bunkerweb-* -ErrorAction SilentlyContinue | Format-Table Name, Status, StartType
-          Get-NetTCPConnection -State Listen -ErrorAction SilentlyContinue | Where-Object LocalPort -in 80, 443, 5000, 6000, 7000, 8888 | Format-Table LocalAddress, LocalPort, OwningProcess
+          Get-NetTCPConnection -State Listen -ErrorAction SilentlyContinue | Where-Object LocalPort -in $env:BW_HTTP_PORT, $env:BW_HTTPS_PORT, $env:BW_UI_PORT, $env:BW_API_PORT, $env:BW_HEALTH_PORT, $env:BACKEND_PORT, 80, 443, 5000, 6000, 7000, 8888 | Format-Table LocalAddress, LocalPort, OwningProcess
           Get-ChildItem C:\bunkerweb\var\log\bunkerweb -Recurse -File -ErrorAction SilentlyContinue | ForEach-Object {
             Write-Host "::group::$($_.FullName)"
             Get-Content $_.FullName -Tail 150
@@ -585,28 +690,118 @@ jobs:
           Write-Host 'Uninstalled, configuration kept.'
 
   # ------------------------------------------------------------------------------------------ release
+  # Runs on main (push or manual dispatch) after a smoke test that either passed or failed (not when it was skipped or
+  # cancelled):
+  #   passed -> release   tag v<bunkerweb version>      (the latest release)
+  #   failed -> draft     tag v<bunkerweb version>-RC  (installer + smoke-test logs)
+  # The previous release of the same kind (same tag AND same draft state) is deleted first, together with its tag and
+  # assets, so each kind always has exactly one current release. A draft never touches the real release and vice versa.
+  # The tag is recreated on the commit that was built (the release API creates it from target_commitish).
   release:
-    if: startsWith(github.ref, 'refs/tags/v')
+    if: >-
+      ${{ always()
+      && github.ref == 'refs/heads/main'
+      && github.event_name != 'pull_request'
+      && needs.package.result == 'success'
+      && (needs.smoke-test.result == 'success' || needs.smoke-test.result == 'failure') }}
     needs: [package, smoke-test]
     runs-on: ubuntu-latest
     permissions:
       contents: write
+    # delete + create must not be interrupted or interleaved by another run
+    concurrency:
+      group: bunkerweb-windows-release
+      cancel-in-progress: false
+    env:
+      GH_TOKEN: ${{ github.token }}
+      GH_REPO: ${{ github.repository }}
+      VERSION: ${{ needs.package.outputs.version }}
+      REVISION: ${{ needs.package.outputs.revision }}
+      SMOKE_RESULT: ${{ needs.smoke-test.result }}
     steps:
+      - name: Name the release
+        id: names
+        shell: bash
+        run: |
+          set -euo pipefail
+          if [ "$SMOKE_RESULT" = success ]; then
+            echo "tag=v${VERSION}" >> "$GITHUB_OUTPUT"
+            echo "name=BunkerWeb ${VERSION} for Windows" >> "$GITHUB_OUTPUT"
+            echo "draft=false" >> "$GITHUB_OUTPUT"
+          else
+            echo "tag=v${VERSION}-RC" >> "$GITHUB_OUTPUT"
+            echo "name=BunkerWeb ${VERSION}-RC for Windows" >> "$GITHUB_OUTPUT"
+            echo "draft=true" >> "$GITHUB_OUTPUT"
+          fi
+
       - uses: actions/download-artifact@v8
         with:
           name: installer
           path: dist
 
+      # the logs artifact is uploaded even when the smoke test fails; release assets must be single files
+      - uses: actions/download-artifact@v8
+        if: steps.names.outputs.draft == 'true'
+        continue-on-error: true
+        with:
+          name: smoke-test-logs
+          path: smoke-test-logs
+
+      - name: Pack the smoke-test logs
+        if: steps.names.outputs.draft == 'true'
+        shell: bash
+        run: |
+          if [ -d smoke-test-logs ] && [ -n "$(ls -A smoke-test-logs)" ]; then
+            (cd smoke-test-logs && zip -qr ../dist/smoke-test-logs.zip .)
+          fi
+          ls -l dist
+
+      - name: Remove the previous release of the same kind
+        shell: bash
+        env:
+          TAG: ${{ steps.names.outputs.tag }}
+          DRAFT: ${{ steps.names.outputs.draft }}
+        run: |
+          set -euo pipefail
+          gh api --paginate "repos/${GH_REPO}/releases?per_page=100" \
+            | jq -r --arg tag "$TAG" --argjson draft "$DRAFT" '.[] | select(.tag_name == $tag and .draft == $draft) | .id' \
+            | while read -r id; do
+                echo "Deleting release $id ($TAG, draft=$DRAFT)"
+                gh api -X DELETE "repos/${GH_REPO}/releases/${id}"
+              done
+          # a leftover tag would keep pointing at an older commit; it does not exist when no such release was published
+          gh api -X DELETE "repos/${GH_REPO}/git/refs/tags/${TAG}" 2>/dev/null && echo "Deleted tag $TAG" || true
+
+      - name: Write the release notes
+        shell: bash
+        env:
+          DRAFT: ${{ steps.names.outputs.draft }}
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+        run: |
+          {
+            if [ "$DRAFT" = true ]; then
+              echo "**RELEASE CANDIDATE - the smoke test FAILED. Do not use this on a production server.** Logs: [workflow run]($RUN_URL), \`smoke-test-logs.zip\`."
+              echo
+            fi
+            echo "**BunkerWeb ${VERSION} for Windows** (port revision ${REVISION}) - native Windows services, no containers."
+            echo
+            echo "This is an **unofficial** port, it is not supported by Bunkerity. BunkerWeb is licensed under the AGPLv3;"
+            echo "the complete corresponding source is this repository at the commit of this release (Windows port in \`windows/\`)"
+            echo "together with the \`bunkerweb\` submodule commit it references."
+            echo
+            echo "Installation and configuration: see \`README.md\`."
+          } > release-notes.md
+
       - uses: softprops/action-gh-release@v3
         with:
+          tag_name: ${{ steps.names.outputs.tag }}
+          name: ${{ steps.names.outputs.name }}
+          target_commitish: ${{ github.sha }}
+          draft: ${{ steps.names.outputs.draft == 'true' }}
+          prerelease: false
+          make_latest: ${{ steps.names.outputs.draft != 'true' }}
+          body_path: release-notes.md
           files: |
             dist/*.exe
             dist/SHA256SUMS.txt
-          body: |
-            **BunkerWeb ${{ needs.package.outputs.version }} for Windows** (port revision ${{ needs.package.outputs.revision }}) - native Windows services, no containers.
-
-            This is an **unofficial** port, it is not supported by Bunkerity. BunkerWeb is licensed under the AGPLv3;
-            the complete corresponding source is this repository at this tag (Windows port in `windows/`) together with
-            the `bunkerweb` submodule commit it references.
-
-            Installation and configuration: see `README.md`.
+            dist/smoke-test-logs.zip

@@ -1,9 +1,10 @@
 """BunkerWeb for Windows: control helper (bwctl).
 
-    bwctl status             service states, nginx health and listening ports
-    bwctl reload             ask nginx (internal API on 127.0.0.1:5000) to reload its current configuration
+    bwctl status             service states, nginx health and the internal API
+    bwctl reload             ask nginx (internal API, API_HTTP_PORT) to reload its current configuration
     bwctl reload-scheduler   ask the scheduler to re-read variables.env and regenerate the config
     bwctl restart [svc ...]  restart services (default: all installed ones, in dependency order)
+    bwctl firewall           (re)create the Windows Firewall rule for HTTP_PORT/HTTPS_PORT from variables.env
     bwctl test               run `nginx -t` against the live configuration
     bwctl logs [name] [-n N] print the tail of a log file (error, access, scheduler, ui, api, service-<name>)
 """
@@ -73,12 +74,20 @@ def http(url: str, method: str = "GET", host: str = None, token: str = None, tim
         return 0, str(e)
 
 
+def port_setting(v: dict, key: str, default: str) -> str:
+    value = v.get(key, "").strip() or default
+    if not value.isdigit() or not 0 < int(value) < 65536:
+        raise ValueError(f"{key}={value!r} in variables.env is not a valid TCP port")
+    return value
+
+
 def cmd_status(_args) -> int:
+    v = variables()
     for name in SERVICES:
         print(f"{name:<22} {service_state(name)}")
-    code, body = http("http://127.0.0.1:6000/healthz", host="healthcheck.bunkerweb.io", timeout=3)
+    health_port = v.get("HEALTHCHECK_PORT", "").strip() or "6000"
+    code, body = http(f"http://127.0.0.1:{health_port}/healthz", host="healthcheck.bunkerweb.io", timeout=3)
     print(f"{'nginx health':<22} {body.strip() if code == 200 else f'unreachable ({body.strip()[:80]})'}")
-    v = variables()
     api_ip = v.get("API_LISTEN_IP", "127.0.0.1").strip() or "127.0.0.1"
     api_port = v.get("API_HTTP_PORT", "5000").strip() or "5000"
     code, body = http(f"http://{api_ip}:{api_port}/ping", host=v.get("API_SERVER_NAME", "bwapi").strip() or "bwapi", token=v.get("API_TOKEN", "").strip(), timeout=3)
@@ -127,6 +136,25 @@ def cmd_restart(args) -> int:
     return subprocess.run(["powershell.exe", "-NoProfile", "-Command", "$ErrorActionPreference='Stop'; " + script]).returncode
 
 
+def cmd_firewall(_args) -> int:
+    v = variables()
+    try:
+        ports = sorted({port_setting(v, "HTTP_PORT", "80"), port_setting(v, "HTTPS_PORT", "443")}, key=int)
+    except ValueError as e:
+        print(e, file=sys.stderr)
+        return 1
+    script = (
+        "$ErrorActionPreference='Stop'; "
+        "Remove-NetFirewallRule -Group 'BunkerWeb' -ErrorAction SilentlyContinue; "
+        "New-NetFirewallRule -Group 'BunkerWeb' -DisplayName 'BunkerWeb HTTP/HTTPS' -Direction Inbound -Protocol TCP "
+        f"-LocalPort {','.join(ports)} -Action Allow -Profile Any | Out-Null"
+    )
+    code = subprocess.run(["powershell.exe", "-NoProfile", "-NonInteractive", "-ExecutionPolicy", "Bypass", "-Command", script]).returncode
+    if code == 0:
+        print(f"Windows Firewall: inbound TCP {', '.join(ports)} allowed (rule group 'BunkerWeb').")
+    return code
+
+
 def cmd_test(_args) -> int:
     return subprocess.run([NGINX_EXE, "-t", "-e", "/bunkerweb/var/log/bunkerweb/error.log"], cwd=ROOT_DIR).returncode
 
@@ -162,6 +190,7 @@ COMMANDS = {
     "reload": cmd_reload,
     "reload-scheduler": cmd_reload_scheduler,
     "restart": cmd_restart,
+    "firewall": cmd_firewall,
     "test": cmd_test,
     "logs": cmd_logs,
 }

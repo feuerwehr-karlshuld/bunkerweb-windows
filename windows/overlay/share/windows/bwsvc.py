@@ -27,6 +27,7 @@ import urllib.request
 from ctypes import wintypes
 from datetime import datetime
 from pathlib import Path
+from urllib.parse import urlsplit
 
 BW = Path("/bunkerweb/usr/share/bunkerweb")
 DEPS = BW / "deps" / "python"
@@ -48,14 +49,18 @@ VARIABLES_ENV_DEFAULT = """# BunkerWeb for Windows - global configuration (confi
 IS_LOADING=yes
 SERVER_NAME=
 DNS_RESOLVERS=9.9.9.9 149.112.112.112 8.8.8.8 8.8.4.4
+# ports (restart the services after a change: bwctl restart; adapt the firewall rule: bwctl firewall)
 HTTP_PORT=80
 HTTPS_PORT=443
 API_LISTEN_IP=127.0.0.1
+# API_HTTP_PORT=5000
+# HEALTHCHECK_PORT=6000
 API_TOKEN=
 KEEP_CONFIG_ON_RESTART=no
 MULTISITE=yes
 # nginx for Windows effectively uses a single worker process
 WORKER_PROCESSES=1
+# address of the web UI service; the port of this URL is also the port the UI service listens on
 UI_HOST=http://127.0.0.1:7000
 """
 
@@ -113,8 +118,11 @@ TMP_ENV_DEFAULTS = {
     "REAL_IP_HEADER": "X-Forwarded-For",
     "HTTP_PORT": "80",
     "HTTPS_PORT": "443",
+    "HEALTHCHECK_PORT": "6000",
     "KEEP_CONFIG_ON_RESTART": "no",
 }
+
+DEFAULT_UI_PORT = "7000"
 
 # ---------------------------------------------------------------------------------------- helpers
 
@@ -318,8 +326,8 @@ def stop_nginx(component: str, pid: int, proc=None, quit_timeout: int = 20) -> N
         proc.kill()
 
 
-def healthz() -> str:
-    request = urllib.request.Request("http://127.0.0.1:6000/healthz", headers={"Host": "healthcheck.bunkerweb.io"})
+def healthz(port: str) -> str:
+    request = urllib.request.Request(f"http://127.0.0.1:{port}/healthz", headers={"Host": "healthcheck.bunkerweb.io"})
     try:
         with urllib.request.urlopen(request, timeout=2) as response:
             return response.read().decode("utf-8", "replace").strip()
@@ -401,7 +409,7 @@ def component_nginx() -> int:
     for _ in range(30):
         if STOP.is_set() or proc.poll() is not None:
             break
-        state = healthz()
+        state = healthz(values["HEALTHCHECK_PORT"])
         if state in ("ok", "loading"):
             log(c, f"nginx started (PID {proc.pid}, health: {state})")
             break
@@ -608,7 +616,14 @@ def ui_env() -> dict:
         return ui_values.get(name) or variables.get(name) or default
 
     env["LISTEN_ADDR"] = get("UI_LISTEN_ADDR", "") or get("LISTEN_ADDR", "127.0.0.1")
-    env["LISTEN_PORT"] = get("UI_LISTEN_PORT", "") or get("LISTEN_PORT", "7000")
+    # port: explicit UI_LISTEN_PORT / LISTEN_PORT (ui.env), else the port of UI_HOST (variables.env), else 7000
+    ui_host_port = ""
+    try:
+        ui_host_port = str(urlsplit(variables.get("UI_HOST", "").strip()).port or "")
+    except ValueError:
+        log("ui", f"Ignoring the port of an invalid UI_HOST: {variables.get('UI_HOST', '')!r}")
+    ui_port = (get("UI_LISTEN_PORT", "") or get("LISTEN_PORT", "")).strip() or ui_host_port or DEFAULT_UI_PORT
+    env["LISTEN_PORT"] = ui_port
     env["FORWARDED_ALLOW_IPS"] = get("UI_FORWARDED_ALLOW_IPS", "") or get("FORWARDED_ALLOW_IPS", "127.0.0.1,::1")
     env["PROXY_ALLOW_IPS"] = get("UI_PROXY_ALLOW_IPS", "") or get("PROXY_ALLOW_IPS", env["FORWARDED_ALLOW_IPS"])
     env["LOG_TYPES"] = get("UI_LOG_TYPES", "") or get("LOG_TYPES", "file")
@@ -617,6 +632,8 @@ def ui_env() -> dict:
     env["CAPTURE_OUTPUT"] = "yes"
     env.update(parse_env_file(ETC / "variables.env", identifiers_only=True))
     env.update(parse_env_file(ETC / "ui.env", identifiers_only=True))
+    # the files above may carry the raw values again: the computed port wins (gunicorn.conf.py reads both names)
+    env["LISTEN_PORT"] = env["UI_LISTEN_PORT"] = ui_port
     return env
 
 

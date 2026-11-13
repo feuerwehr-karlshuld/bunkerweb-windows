@@ -21,7 +21,7 @@ HTTP backends on the same server and in the LAN, Let's Encrypt via **HTTP-01** (
 2. **CI is the only test harness.** There is no supported local build and no Windows machine in the dev loop. The pipeline
    runs on `windows-2022`. You cannot verify a change by running it; read logs, reason carefully, and say so when something
    is unverified. The human provides CI logs (`gh run view <id> --log-failed`, or the full `run.log`).
-3. **Do not commit, push, tag or create branches unless the user asks.** Tags `v<bunkerweb-version>-win<N>` trigger releases.
+3. **Do not commit, push, tag or create branches unless the user asks.** Releases and their tags are created by the `release` job, not by hand.
 4. **Licence is AGPLv3** (upstream). The repo must stay public, or the source must otherwise be available to users of the
    installer. Do not add code under incompatible licences.
 5. Keep **forward slashes / POSIX-style absolute paths** where BunkerWeb expects them. Everything lives under the single root
@@ -57,23 +57,37 @@ windows/service/*.xml       WinSW 2.x service definitions: bunkerweb-nginx, -sch
 
 `modsecurity` (MSVC/conan, slow, cached) -> `native` (MSYS2/GCC, needs the modsecurity artifact) and `python` (parallel) ->
 `package` (stage, Inno Setup, `SHA256SUMS.txt`) -> `smoke-test` (silent install, proxy a request, bwctl checks, UI on :7000,
-restart, uninstall) -> `release` (tags only).
+restart, uninstall) -> `release` (main only; smoke test green: release `v<bunkerweb-version>`, e.g. `v1.6.17`, marked latest; smoke test
+red: **draft** `v<bunkerweb-version>-RC` with installer and `smoke-test-logs.zip`. Each run deletes the previous release of the
+same kind (same tag and draft state, incl. its tag and assets) and recreates it on the built commit; drafts and real releases
+never replace each other).
 
 - **Build caches:** `modsecurity`, `native` and `python` cache their output directory (`build/modsecurity|native|python`)
-  with `actions/cache`. Key = job + `CACHE_VERSION` (workflow `env`) + the commit of the `bunkerweb` submodule
+  and `package` caches the finished installer (`dist/`: setup exe + `SHA256SUMS.txt`) with `actions/cache`. Key = job + `CACHE_VERSION` (workflow `env`) + the commit of the `bunkerweb` submodule
   (`git rev-parse HEAD:bunkerweb`) + `hashFiles(...)` of the repository files that influence that output. On an exact hit the build
   steps (and, for `native`, MSYS2 and the modsecurity artifact download) are skipped, the artifact is still uploaded for the next
   job. **When you add an input to a build script, add it to that job's `hashFiles(...)`**, otherwise a stale cache is served.
   What is *not* in the keys (workflow/MSYS2 package list, runner image, unpinned tools such as conan, pywin32, tzdata): bump
   `CACHE_VERSION`. `native`'s key includes modsecurity's inputs because nginx links its output; `python`'s key contains the exact
-  CPython version from `setup-python`. Cache entries are scoped per branch, tag runs restore what `main` saved, unused entries
-  expire after 7 days. `package` and `smoke-test` are never cached.
+  CPython version from `setup-python`. Cache entries are scoped per branch, unused entries
+  expire after 7 days. `smoke-test` is never cached.
+    `package`'s key = `CACHE_VERSION` + version + port revision + bunkerweb commit + CPython version + `BUSYBOX_SHA256` +
+    `WINSW_SHA256` + `hashFiles('windows/**', '.github/actions/**')`. On a hit, prepare-src, both artifact downloads, the tool
+    download, stage and ISCC are skipped and the restored `dist/` is uploaded as the `installer` artifact (the `stage` artifact
+    does not exist then). The `Version` step still runs, so the `release` job is unaffected. The revision is the `port_revision`
+    input of a manual run, else `1`. **The workflow file itself is not in any key:** changing the package,
+    stage or ISCC steps or the tool download logic needs a `CACHE_VERSION` bump; editing only smoke-test steps keeps the hit.
+  The cache is saved by an explicit `actions/cache/save` step right after a successful build (the restore is
+  `actions/cache/restore`), so a failing artifact upload or failing later jobs do not lose it. The conan packages of the
+  ModSecurity build are saved even if that build fails (a partial conan cache is kept for that key until the
+  `conanfile.txt` changes).
 
 - Every job: `core.autocrlf false` + `core.longpaths true`, checkout with submodules, setup-python, then `prepare-src`.
   LF endings matter: the anchored replacements match exact text including newlines.
 - Downloads are pinned and SHA-256 verified (busybox-w32, WinSW 2.12.0 `WinSW.NET461.exe`). Change URL and hash together.
 - `PYTHON_VERSION` is `3.14` (what BunkerWeb's Linux packages use). If a dependency has no cp314 wheel, switch to `3.13`.
-- Release tag format `v<VERSION>-win<N>`; `<VERSION>` must equal `bunkerweb/src/VERSION`.
+- Release/tag format: `v<VERSION>` (release) and `v<VERSION>-RC` (draft); `<VERSION>` is `bunkerweb/src/VERSION` of the submodule.
+  The installer file name still carries the port revision (`-win<N>`).
 - Artifacts: `modsecurity`, `native`, `python`, `stage`, `installer`, `smoke-test-logs` (first place to look after a failure).
 
 ## How to work on a change
@@ -138,13 +152,20 @@ restart, uninstall) -> `release` (tags only).
   `bunkerweb/src` on Linux (all changed `.py` files parse, second pass is a no-op). Nothing has run in CI since. Watch for: rewrite
   coverage (the step prints `NOTE` lines for skipped Linux paths, only `/usr/local/etc/nginx/nginx.conf` in `api.lua` is expected),
   nginx's compiled-in paths, and the new smoke-test step "Nothing is installed outside C:\bunkerweb".
-- **Build caches (unverified):** `modsecurity`, `native` and `python` now restore/save their output with `actions/cache` (see
-  Pipeline). Not run yet: the first run after this change is all misses, the second one is the first real test of the hit path.
+- **Build caches (unverified):** `modsecurity`, `native`, `python` and `package` (the installer) now restore/save their output
+  with `actions/cache` (see Pipeline). Not run yet: the first run after this change is all misses, the second one is the first real test of the hit path.
+- **Configurable ports (unverified):** `HTTP_PORT`, `HTTPS_PORT`, `API_HTTP_PORT` were already upstream settings; new are
+  `HEALTHCHECK_PORT` (global setting injected into `common/settings.json` + `healthcheck.conf` by `apply-windows-port.py`
+  step 3b), the web UI port (taken from the port of `UI_HOST`, `bwsvc.py` `ui_env`; `ui.env` `UI_LISTEN_PORT`/`LISTEN_PORT`
+  still override) and `bwctl firewall` (the installer's firewall task calls it, so the rule follows `variables.env`).
+  The smoke test now picks random free ports (20000-29999) for HTTP, HTTPS, UI, API, health check and the backend and asserts
+  firewall rule, listeners and requests against them. Not run yet; watch the settings.json insertion and the new
+  "Windows Firewall rule and listeners use the configured ports" step.
 - **Next:** push, run the workflow, iterate on failures. Most likely trouble spots, roughly in order: nginx link step
   (OpenSSL whole-archive, libModSecurity import lib, module linking), Python 3.14 wheel availability, `stage.ps1`
   required-files check, installer script, runtime behaviour of the shims and `bwsvc.py` in the smoke test (reload via named
   events, certbot invocation, WinSW service dependencies).
-- After a green run: tag `v1.6.17-win1`, then trial on a non-critical server including a Let's Encrypt *staging* issuance.
+- After a green run (the release `v1.6.17` appears by itself): trial on a non-critical server including a Let's Encrypt *staging* issuance.
 - Operator guide and installer have never run on a real server. Do not describe anything as "tested" beyond what the smoke test
   in a green CI run covers.
 
@@ -153,4 +174,4 @@ restart, uninstall) -> `release` (tags only).
 - Do not turn this into a fork of BunkerWeb or vendor modified upstream files into the repo.
 - Do not add container, VM or WSL based alternatives: they are explicitly ruled out by the requirements.
 - Do not store secrets (tokens, passwords, API keys) in the repo. The operator's `variables.env` with their real hosts and
-  backends lives in their own private configuration repo. The one real hostname in README section 4 is an intentional example.
+  backends lives in their own private configuration repo. Examples in the docs use generic names such as `app.example.com`.

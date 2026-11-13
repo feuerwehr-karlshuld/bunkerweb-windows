@@ -49,6 +49,10 @@ The source-level changes to the copy of `bunkerweb/src` are anchored text replac
 - no `load_module` lines;
 - `select` event model;
 - no `reuseport`;
+- the health check port (hardcoded `127.0.0.1:6000` upstream) becomes the global setting `HEALTHCHECK_PORT`
+  (default 6000), so all ports of the port can be chosen in `variables.env`: `HTTP_PORT`, `HTTPS_PORT`, `API_HTTP_PORT`
+  and `HEALTHCHECK_PORT` (`bwsvc.py` and `bwctl.py` read the same keys), and the web UI port, which is the port
+  of `UI_HOST` (`bwsvc.py`; `UI_LISTEN_PORT`/`LISTEN_PORT` in `ui.env` override it);
 - the `wincompat` shim loaded first;
 - `api.lua` file locking;
 - crowdsec helpers;
@@ -110,7 +114,7 @@ Windows services:
 |---|---|---|
 | `bunkerweb-nginx` | Automatic | nginx master process (`start.sh` equivalent) |
 | `bunkerweb-scheduler` | Automatic (delayed) | configuration generation and jobs (Let's Encrypt, ...) |
-| `bunkerweb-ui` | Automatic (delayed) / Disabled | web UI on `127.0.0.1:7000` |
+| `bunkerweb-ui` | Automatic (delayed) / Disabled | web UI on `127.0.0.1`, port 7000 (the port of `UI_HOST`) |
 | `bunkerweb-api` | Manual | optional REST API on `127.0.0.1:8888` |
 
 ---
@@ -130,6 +134,10 @@ flowchart TD
     E --> F[release: only for tags v*-winN]
 ```
 
+The smoke test assumes no port number: it picks free TCP ports at run time (random, 20000-29999, test-bound first) for
+HTTP, HTTPS, the web UI, the internal API, the health check and the test backend, writes them into `variables.env`, and
+checks that the firewall rule, the listeners and the proxied requests use exactly those.
+
 **Triggers:**
 - `workflow_dispatch`, where you can set the port revision;
 - pushes to `main` that touch `windows/**`, the submodule pointer or the workflow;
@@ -147,11 +155,15 @@ flowchart TD
 The first ModSecurity build compiles its conan dependencies (Poco, libcurl, libxml2, ...) and can take
 a long time. They are cached afterwards.
 
-**Build caches:** the three build jobs (`modsecurity`, `native`, `python`) cache their output. The cache key is made of the
+**Build caches:** the three build jobs (`modsecurity`, `native`, `python`) and `package` (the finished installer) cache their output. The cache key is made of the
 commit of the `bunkerweb` submodule, the files of this repository that influence that output (port script, build scripts, overlay
 files) and `CACHE_VERSION` in the workflow. A run on an unchanged source restores the output instead of rebuilding it, which
 turns a repeated run into a few minutes (package + smoke test). Changing the submodule or one of those files rebuilds only the
-affected jobs. To force a full rebuild, bump `CACHE_VERSION`. Caches that were not used for 7 days are evicted by GitHub.
+affected jobs. The caches are saved right after a successful build, so a failing `smoke-test` can be repeated on the same
+commit without rebuilding anything. On an installer cache hit the `stage` artifact is not produced. The workflow file itself is
+not part of the keys: bump `CACHE_VERSION` to force a full rebuild or after changing how a job builds. Release tags carry their own
+port revision, so they rebuild the installer but reuse the `native` and `python` caches. Caches that were not used for 7 days are
+evicted by GitHub.
 
 ### Locally
 

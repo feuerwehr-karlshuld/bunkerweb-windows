@@ -108,6 +108,9 @@ if sys.platform == "win32":
         "OPENSSL_CONF",
         "MAGIC",
         "BW_BUSYBOX",
+        # BunkerWeb logs emoji: without UTF-8 mode a child's stdout (a pipe/file) is cp1252 and every log line fails
+        "PYTHONUTF8",
+        "PYTHONIOENCODING",
     )
     _SHELLS = {"sh", "bash", "/bin/sh", "/bin/bash", "/usr/bin/sh", "/usr/bin/bash"}
 

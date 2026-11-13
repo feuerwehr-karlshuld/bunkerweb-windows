@@ -124,10 +124,29 @@ never replace each other).
 - The submodule contains a few symlinks (mbedtls examples, brotli research); harmless on Windows.
 - Let's Encrypt data lives in `C:\bunkerweb\var\cache\bunkerweb\letsencrypt` (`/var/cache/bunkerweb/letsencrypt` upstream).
 - Upstream UI/API use gunicorn; the port uses waitress (UI) and uvicorn without uvloop (API).
+- **Python >= 3.13: a rooted path without drive (`/bunkerweb/...`, what step 13 produces) is not absolute on Windows**
+  (`Path.is_absolute()`/`os.path.isabs()` are False). Upstream validators using them (`cache_restore._check_path`, tar link
+  checks, UI log/plugin path checks) are patched in step 12d; watch for further `is_absolute`/`isabs` uses after an upgrade.
+- **No `fork` on Windows:** the config generator (`Templator.render`) forced the fork start method and used a
+  `ProcessPoolExecutor`; step 12c renders in one worker thread instead. Any other `multiprocessing` use needs the same care.
+- Child Python processes spawned by BunkerWeb with an explicit `env=` lose `PYTHONUTF8`/`PYTHONIOENCODING` unless
+  `sitecustomize.py` re-adds them (`_KEEP_ENV`); without them emoji log lines fail with cp1252 `UnicodeEncodeError`.
+- The smoke-test job's `Diagnostics` step prints all service/BunkerWeb logs into the run log (grouped per file).
 
 ## Current state
 
 *Last updated 2026-11-13. Update this section whenever the pipeline state changes.*
+
+- **Fourth CI run:** everything up to the installer passed; `smoke-test` failed: nginx never became healthy. Cause: the config
+  generator died in `Templator` (`ValueError: cannot find context for 'fork'`, so no config, nginx exited and restarted in a loop),
+  plus the scheduler's `default-server-cert` job hit `Invalid cache path` (Python 3.14: `Path('/bunkerweb/...').is_absolute()` is
+  False) and every log line of generator subprocesses raised cp1252 `UnicodeEncodeError`. Fixes written (steps 12c/12d of
+  `apply-windows-port.py`, `_KEEP_ENV` in `sitecustomize.py`), not yet re-run. The `Diagnostics` step was widened (400 lines per
+  log, service logs first, generated config listing, installer log).
+  The smoke test's "Services are running and nginx is healthy" step now **fails fast**: on every poll it fails when a service is
+  Stopped twice in a row, when its WinSW wrapper PID changed, or when `<svc>.wrapper.log` has more than one `Started <pid>` line
+  (WinSW restarted it after a crash), and it prints the tail of each service log before throwing. The `Started` pattern for the
+  wrapper log is a guess at WinSW 2.12's wording (PID tracking is the backup); check it against a real wrapper log.
 
 - **Third CI run** (after the path refactor and the nginx `binary` fix): `modsecurity`, `python` and `native` **passed**, so the
   nginx link works. `package` failed in "Download busybox-w32 and WinSW": `frippery.org` answered `403 Forbidden` to the runner

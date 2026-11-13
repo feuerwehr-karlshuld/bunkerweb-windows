@@ -551,13 +551,48 @@ jobs:
 
       - name: Services are running and nginx is healthy
         run: |
-          foreach ($s in 'bunkerweb-nginx', 'bunkerweb-scheduler', 'bunkerweb-ui') {
-            $svc = Get-Service $s
-            if ($svc.Status -ne 'Running') { throw "$s is $($svc.Status)" }
+          # Fail fast: the services have onfailure=restart (10/30/60 s), so a crash-looping service looks "fine" most of the time
+          # and the old 3 minute wait just hid it. Fail on the first restart (a new WinSW process / a second "Started" line in the
+          # wrapper log) or when a service stays Stopped, and print the tail of the service logs right here.
+          [Console]::OutputEncoding = [System.Text.Encoding]::UTF8
+          $services = 'bunkerweb-nginx', 'bunkerweb-scheduler', 'bunkerweb-ui'
+          $logDir = 'C:\bunkerweb\var\log\bunkerweb\service'
+          $firstPid = @{}
+          $stopped = @{}
+          function Fail-Fast([string]$msg) {
+            foreach ($s in $services) {
+              foreach ($f in Get-ChildItem $logDir -Filter "$s*" -File -ErrorAction SilentlyContinue) {
+                Write-Host "::group::$($f.Name) (last 60 lines)"
+                if ($f.Length -eq 0) { Write-Host '(empty)' } else { Get-Content -LiteralPath $f.FullName -Tail 60 -Encoding utf8 }
+                Write-Host '::endgroup::'
+              }
+            }
+            throw "$msg (full logs: step 'Diagnostics (service and BunkerWeb logs)')"
           }
+          function Test-Services {
+            foreach ($s in $services) {
+              $cim = Get-CimInstance Win32_Service -Filter "Name='$s'"
+              if (-not $cim) { Fail-Fast "$s is not installed" }
+              if ($cim.State -eq 'Stopped') {
+                $stopped[$s] = 1 + [int]$stopped[$s]
+                if ($stopped[$s] -ge 2) { Fail-Fast "$s is Stopped (exited, WinSW will only retry after its delay)" }
+              } else { $stopped[$s] = 0 }
+              if ($cim.ProcessId -gt 0) {
+                if (-not $firstPid.ContainsKey($s)) { $firstPid[$s] = $cim.ProcessId }
+                elseif ($firstPid[$s] -ne $cim.ProcessId) { Fail-Fast "$s was restarted by WinSW (process $($firstPid[$s]) -> $($cim.ProcessId))" }
+              }
+              $wrapperLog = Join-Path $logDir "$s.wrapper.log"
+              if (Test-Path $wrapperLog) {
+                $starts = @(Select-String -LiteralPath $wrapperLog -Pattern 'Started (process )?\d+').Count
+                if ($starts -gt 1) { Fail-Fast "$s was started $starts times (it crashed and WinSW restarted it)" }
+              }
+            }
+          }
+          Test-Services
           $deadline = (Get-Date).AddMinutes(3)
           $healthy = $false
           do {
+            Test-Services
             try {
               $r = Invoke-WebRequest -UseBasicParsing -TimeoutSec 5 -Headers @{ Host = 'healthcheck.bunkerweb.io' } "http://127.0.0.1:$env:BW_HEALTH_PORT/healthz"
               Write-Host "healthz: $($r.Content.Trim())"
@@ -565,7 +600,7 @@ jobs:
             } catch { Write-Host "healthz: $($_.Exception.Message)" }
             Start-Sleep -Seconds 5
           } while ((Get-Date) -lt $deadline)
-          if (-not $healthy) { throw 'nginx did not become healthy (still loading?)' }
+          if (-not $healthy) { Fail-Fast 'nginx did not become healthy within 3 minutes' }
 
       - name: Windows Firewall rule and listeners use the configured ports
         run: |
@@ -651,14 +686,36 @@ jobs:
           } while ((Get-Date) -lt $deadline)
           if ($code -ne 200) { throw 'Site not served after a restart' }
 
-      - name: Diagnostics
+      # Everything the services wrote, straight into the run log (one collapsible group per file, service wrapper/stdout/stderr
+      # first), so a failure can be analysed without downloading the smoke-test-logs artifact.
+      - name: Diagnostics (service and BunkerWeb logs)
         if: always()
         run: |
+          [Console]::OutputEncoding = [System.Text.Encoding]::UTF8
+          Write-Host '::group::Services'
           Get-Service bunkerweb-* -ErrorAction SilentlyContinue | Format-Table Name, Status, StartType
+          Write-Host '::endgroup::'
+          Write-Host '::group::Listening ports'
           Get-NetTCPConnection -State Listen -ErrorAction SilentlyContinue | Where-Object LocalPort -in $env:BW_HTTP_PORT, $env:BW_HTTPS_PORT, $env:BW_UI_PORT, $env:BW_API_PORT, $env:BW_HEALTH_PORT, $env:BACKEND_PORT, 80, 443, 5000, 6000, 7000, 8888 | Format-Table LocalAddress, LocalPort, OwningProcess
-          Get-ChildItem C:\bunkerweb\var\log\bunkerweb -Recurse -File -ErrorAction SilentlyContinue | ForEach-Object {
-            Write-Host "::group::$($_.FullName)"
-            Get-Content $_.FullName -Tail 150
+          Write-Host '::endgroup::'
+          if (Test-Path C:\bunkerweb\etc\nginx) {
+            Write-Host '::group::Generated nginx configuration (C:\bunkerweb\etc\nginx)'
+            Get-ChildItem C:\bunkerweb\etc\nginx -Recurse -File | ForEach-Object { '{0,8}  {1}' -f $_.Length, $_.FullName.Substring(3) }
+            Write-Host '::endgroup::'
+          }
+          $logRoot = 'C:\bunkerweb\var\log\bunkerweb'
+          $files = @(Get-ChildItem $logRoot -Recurse -File -ErrorAction SilentlyContinue)
+          # service logs (WinSW wrapper, stdout, stderr) first, then BunkerWeb's own logs
+          $files = @($files | Where-Object { $_.DirectoryName -like '*\service' }) + @($files | Where-Object { $_.DirectoryName -notlike '*\service' })
+          foreach ($f in $files) {
+            Write-Host "::group::$($f.FullName) ($($f.Length) bytes)"
+            if ($f.Length -eq 0) { Write-Host '(empty)' }
+            else { Get-Content -LiteralPath $f.FullName -Tail 400 -Encoding utf8 }
+            Write-Host '::endgroup::'
+          }
+          if (Test-Path C:\bunkerweb-setup.log) {
+            Write-Host '::group::Installer log (C:\bunkerweb-setup.log, last 100 lines)'
+            Get-Content C:\bunkerweb-setup.log -Tail 100
             Write-Host '::endgroup::'
           }
 

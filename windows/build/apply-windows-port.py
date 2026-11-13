@@ -222,6 +222,35 @@ rep(
     1,
 )
 
+# ---------------------------------------------------------------- 12c. config generator: no fork() on Windows
+# Templator.render() forces the "fork" multiprocessing start method (so children inherit globals) and renders the
+# servers in a ProcessPoolExecutor. Windows only has "spawn", which would have to pickle the Templator and re-import
+# the generator in every child. The rendering is a few Jinja templates per server: do it in one worker thread.
+TPL = "common/gen/Templator.py"
+rep(TPL, "from concurrent.futures import ProcessPoolExecutor, as_completed", "from concurrent.futures import ThreadPoolExecutor, as_completed", 1)
+rep(TPL, "        _ensure_fork_start_method()\n        _ssl_ecdh_curve_resolution_logged = False", "        _ssl_ecdh_curve_resolution_logged = False", 1)
+rep(TPL, "with ProcessPoolExecutor(max_workers=max_workers) as executor:", "with ThreadPoolExecutor(max_workers=1) as executor:", 1)
+
+# ---------------------------------------------------------------- 12d. rooted paths are not absolute (Python >= 3.13)
+# Since Python 3.13 a path without drive letter ("/bunkerweb/var/cache/bunkerweb", see step 13) is NOT absolute on
+# Windows: Path.is_absolute() and os.path.isabs() are False. BunkerWeb's validators use them to reject relative paths
+# (and to block absolute members/links of archives), so a rooted path counts as absolute here.
+rep(
+    "common/utils/cache_restore.py",
+    "if not path.is_absolute() or path == path.parent",
+    "if not (path.is_absolute() or path.root) or path == path.parent",
+    1,
+)
+rep(
+    "common/utils/common_utils.py",
+    "if Path(member.linkname).is_absolute():",
+    "if Path(member.linkname).is_absolute() or Path(member.linkname).root:",
+    1,
+)
+rep("ui/app/routes/logs.py", "isabs(current_file) or", 'isabs(current_file) or current_file.startswith(("/", "\\\\")) or', 2)
+rep("ui/app/routes/plugins.py", "isabs(file) or", 'isabs(file) or file.startswith(("/", "\\\\")) or', 1)
+rep("ui/app/routes/plugins.py", "isabs(member.name) or", 'isabs(member.name) or member.name.startswith(("/", "\\\\")) or', 1)
+
 # ---------------------------------------------------------------- 13. single root folder: C:\bunkerweb
 # Everything of this port lives below C:\bunkerweb, in the same sub-layout as the Linux packages
 # (C:\bunkerweb\etc\bunkerweb, C:\bunkerweb\var\lib\bunkerweb, ...). BunkerWeb hardcodes the Linux locations,

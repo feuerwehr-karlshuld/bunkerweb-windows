@@ -145,6 +145,12 @@ never replace each other).
 
 *Last updated 2026-11-13. Update this section whenever the pipeline state changes.*
 
+- **Eighth CI run:** the seventh run's `"w+b"` fix **worked**: `healthz` became `ok` ~20 s after start, firewall rule and all five
+  listeners match the configured ports, and the reverse proxy to the backend returned the marker (HTTP 200). The first failing step was
+  "Unknown hosts are rejected by the default server", a **test bug**, not a port bug: the default server (`DISABLE_DEFAULT_SERVER=no`)
+  correctly answered `301` (HTTP -> HTTPS redirect, access log confirms), and `Invoke-WebRequest` followed it to
+  `https://unknown.smoke.test:<port>/`, which the runner cannot resolve (`No such host is known`). Fix written, not yet re-run:
+  `-MaximumRedirection 0` on that request. The steps after it (bwctl, UI, restart, uninstall) have not been seen yet.
 - **Seventh CI run:** the sixth run's fix **worked** (all plugins load, nginx runs, the scheduler generates and pushes). `smoke-test`
   failed: `healthz` stayed `loading` for 3 minutes because every push to the API except `/plugins` returned `500 cannot extract
   archive` (`/confs`, `/cache`, `/custom_configs`, `/pro_plugins`), so nginx never got its "config received" state. Cause (inferred from

@@ -647,7 +647,9 @@ jobs:
 
       - name: Unknown hosts are rejected by the default server
         run: |
-          $r = Invoke-WebRequest -UseBasicParsing -TimeoutSec 10 -SkipHttpErrorCheck -UserAgent $env:UA -Headers @{ Host = 'unknown.smoke.test' } "http://127.0.0.1:$env:BW_HTTP_PORT/"
+          # Do not follow redirects: the default server answers unknown hosts with 301 -> https://unknown.smoke.test/ (the
+          # AUTO_REDIRECT_HTTP_TO_HTTPS default), and following it fails with "No such host is known" in the runner's DNS.
+          $r = Invoke-WebRequest -UseBasicParsing -TimeoutSec 10 -SkipHttpErrorCheck -MaximumRedirection 0 -UserAgent $env:UA -Headers @{ Host = 'unknown.smoke.test' } "http://127.0.0.1:$env:BW_HTTP_PORT/"
           Write-Host "HTTP $($r.StatusCode)"
           if ($r.StatusCode -eq 200 -and "$($r.Content)" -like "*$env:MARKER*") { throw 'The default server proxied an unknown host' }
 

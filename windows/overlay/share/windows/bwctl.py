@@ -118,7 +118,11 @@ def cmd_reload(_args) -> int:
 def cmd_reload_scheduler(_args) -> int:
     handle = kernel32.OpenEventW(0x0002, False, SCHEDULER_RELOAD_EVENT)  # EVENT_MODIFY_STATE
     if not handle:
-        print(f"The scheduler is not running (error {ctypes.get_last_error()}).", file=sys.stderr)
+        error = ctypes.get_last_error()
+        if error == 5:
+            print("Access denied: run this command from an elevated (administrator) shell (error 5).", file=sys.stderr)
+        else:
+            print(f"The scheduler is not running (error {error}).", file=sys.stderr)
         return 1
     try:
         ok = kernel32.SetEvent(handle)

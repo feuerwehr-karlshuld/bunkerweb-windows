@@ -131,6 +131,17 @@ rep(
 )
 rep("common/core/misc/plugin.json", '"default": "yes",\n      "help": "Support HTTP3 protocol', '"default": "no",\n      "help": "Not available on Windows (nginx has no HTTP/3 there). Support HTTP3 protocol', 1)
 
+# ---------------------------------------------------------------- 3d. DNS_RESOLVERS default
+# Upstream defaults to 127.0.0.11, the embedded DNS server of Docker. On Windows nothing listens there: every DNS lookup of
+# nginx/Lua (DNSBL, hostname backends, ...) fails with "WSARecv() failed (10054)" and slows init_worker down. Same public
+# resolvers as the Linux packages and the variables.env template (bwsvc.py).
+rep(
+    "common/settings.json",
+    '"default": "127.0.0.11",\n    "help": "DNS addresses of resolvers to use.",',
+    '"default": "9.9.9.9 149.112.112.112 8.8.8.8 8.8.4.4",\n    "help": "DNS addresses of resolvers to use.",',
+    1,
+)
+
 # nginx resolves -e (the early error log) with its own code that only knows drive-letter paths: "/bunkerweb/..." would be
 # appended to the prefix. (error_log in nginx.conf is fine, nginx handles rooted paths there.)
 rep("bw/lua/bunkerweb/api.lua", "-t -e /var/log/bunkerweb/error.log", "-t -e C:/bunkerweb/var/log/bunkerweb/error.log", 1)
@@ -247,9 +258,30 @@ rep(SHDICT, "C.free(buf)", "bw_free(buf)", 2)
 SYNC = "common/gen/sync_tree.py"
 # replace first: the helper inserted below contains the original text itself
 rep(SYNC, 'Path("/proc/uptime").read_bytes()', "_bw_uptime_bytes()", 1)
+# Moving a freshly generated file over the live one fails with WinError 5 (ACCESS_DENIED) while another process holds
+# the target open without FILE_SHARE_DELETE (a reader such as nginx -t / libModSecurity, antivirus, an editor) or the
+# target is read-only. Both are transient or fixable: retry for a while, clearing the read-only attribute in between.
+rep(SYNC, "            replace(entry, target)\n", "            _bw_replace(entry, target)\n", 1)
 insert_after(
     SYNC,
     "from typing import Callable, Iterator, Optional\n",
+    "\n\ndef _bw_replace(src, dst) -> None:\n"
+    "    import sys\n"
+    '    if sys.platform != "win32":\n'
+    "        replace(src, dst)\n"
+    "        return\n"
+    "    import stat\n"
+    "    deadline = monotonic() + 20\n"
+    "    while True:\n"
+    "        try:\n"
+    "            replace(src, dst)\n"
+    "            return\n"
+    "        except PermissionError:\n"
+    "            if monotonic() >= deadline:\n"
+    "                raise\n"
+    "            with suppress(OSError):\n"
+    "                Path(dst).chmod(stat.S_IWRITE | stat.S_IREAD)\n"
+    "            sleep(0.25)\n"
     "\n\ndef _bw_uptime_bytes() -> bytes:\n"
     "    import sys\n"
     '    if sys.platform == "win32":\n'
@@ -305,6 +337,24 @@ TPL = "common/gen/Templator.py"
 rep(TPL, "from concurrent.futures import ProcessPoolExecutor, as_completed", "from concurrent.futures import ThreadPoolExecutor, as_completed", 1)
 rep(TPL, "        _ensure_fork_start_method()\n        _ssl_ecdh_curve_resolution_logged = False", "        _ssl_ecdh_curve_resolution_logged = False", 1)
 rep(TPL, "with ProcessPoolExecutor(max_workers=max_workers) as executor:", "with ThreadPoolExecutor(max_workers=1) as executor:", 1)
+
+# ssl_ecdh_curve probe: it binds libssl through find_library("ssl") / libssl.so.*, none of which exist on Windows, so every
+# generator run logged "could not bind libssl for the faithful set1_groups_list probe" and fell back to the FIPS-blind
+# check. The port ships MSYS2's libssl-3-x64.dll (same OpenSSL as the one linked into nginx.exe) in usr\sbin. Load it by
+# absolute path with LOAD_WITH_ALTERED_SEARCH_PATH (8) so that libcrypto and the other DLLs next to it are found.
+rep(
+    TPL,
+    '        for _cand in (find_library("ssl"), "libssl.so.3", "libssl.so", "libssl.so.1.1"):\n',
+    '        for _cand in (\n'
+    '            *(__import__("os").path.abspath(_p) for _p in glob("/bunkerweb/usr/sbin/libssl-3*.dll")),\n'
+    '            find_library("ssl"),\n'
+    '            "libssl.so.3",\n'
+    '            "libssl.so",\n'
+    '            "libssl.so.1.1",\n'
+    '        ):\n',
+    1,
+)
+rep(TPL, "                lib = CDLL(_cand)\n", '                lib = CDLL(_cand, winmode=8) if __import__("sys").platform == "win32" else CDLL(_cand)\n', 1)
 
 # ---------------------------------------------------------------- 12d. rooted paths are not absolute (Python >= 3.13)
 # Since Python 3.13 a path without drive letter ("/bunkerweb/var/cache/bunkerweb", see step 13) is NOT absolute on

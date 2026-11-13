@@ -720,6 +720,15 @@ jobs:
           $files = @(Get-ChildItem $logRoot -Recurse -File -ErrorAction SilentlyContinue)
           # service logs (WinSW wrapper, stdout, stderr) first, then BunkerWeb's own logs
           $files = @($files | Where-Object { $_.DirectoryName -like '*\service' }) + @($files | Where-Object { $_.DirectoryName -notlike '*\service' })
+          # every warning/error line of every log (the per-file groups below only show the last 400 lines)
+          Write-Host '::group::Warnings and errors (all logs, duplicates collapsed)'
+          foreach ($f in $files) {
+            $hits = @(Select-String -LiteralPath $f.FullName -Encoding utf8 -Pattern '\[(warn|error|crit|alert|emerg)\]|WARNING|ERROR|Traceback|\u26a0|\u274c' | ForEach-Object { ($_.Line -replace '^\d{4}[/-]\d\d[/-]\d\d[ T]\d\d:\d\d:\d\d(\.\d+)?\s*', '' -replace '\[\d{4}-\d\d-\d\d \d\d:\d\d:\d\d[^\]]*\]\s*', '' -replace '#\d+: \*\d+', '') } | Group-Object | Sort-Object Count -Descending)
+            if ($hits.Count -eq 0) { continue }
+            Write-Host "--- $($f.FullName.Substring(3))"
+            foreach ($h in $hits | Select-Object -First 60) { Write-Host ("{0,5}x {1}" -f $h.Count, $(if ($h.Name.Length -gt 400) { $h.Name.Substring(0, 400) } else { $h.Name })) }
+          }
+          Write-Host '::endgroup::'
           foreach ($f in $files) {
             Write-Host "::group::$($f.FullName) ($($f.Length) bytes)"
             if ($f.Length -eq 0) { Write-Host '(empty)' }

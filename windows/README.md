@@ -41,7 +41,10 @@ All of it is written for Linux. The port keeps BunkerWeb's own code and Linux la
 | POSIX bits in Python (`fcntl`, `pwd`, `grp`, `os.getuid`, `os.kill(pid, 0)`, `SIGHUP`, ...) | `python-site/` shims, loaded through `sitecustomize`. |
 | systemd units + `start.sh` / `bunkerweb-scheduler.sh` / `bunkerweb-ui.sh` / `bunkerweb-api.sh` | `share/windows/bwsvc.py`, a Python port of those scripts, started by [WinSW](https://github.com/winsw/winsw) services. |
 | gunicorn | waitress (web UI) and uvicorn (API). |
-| `systemctl reload bunkerweb-scheduler` | `bwctl reload-scheduler`, which uses a named event and is mapped to the scheduler's SIGHUP handler. |
+| `systemctl reload bunkerweb-scheduler` | `bwctl reload-scheduler`, which uses a named event (ACL: SYSTEM and Administrators) and is mapped to the scheduler's SIGHUP handler. |
+| Config generator's libssl probe for `ssl_ecdh_curve` (`find_library("ssl")`, `libssl.so.*`) | Loads the shipped `usr\sbin\libssl-3-x64.dll` (step 12c). |
+| `DNS_RESOLVERS` default `127.0.0.11` (Docker's DNS) | Public resolvers (step 3d). |
+| `os.replace` over a live generated file | Retried for up to 20 s on `PermissionError` (step 8), because Windows refuses to replace files that another process has open. |
 
 The source-level changes to the copy of `bunkerweb/src` are anchored text replacements in
 [`build/apply-windows-port.py`](build/apply-windows-port.py) (the ModSecurity CMake trim lives in

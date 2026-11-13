@@ -693,7 +693,9 @@ app.example.de_REVERSE_PROXY_HOST=http://127.0.0.1:83
   ```
 
 - HTTPS backends with self-signed certificates work, because the upstream certificate isn't verified by default. Set SNI as in 6.3.
-- Backends given by hostname are resolved through `DNS_RESOLVERS`. Point it at your internal DNS server.
+- Backends given by hostname are resolved through `DNS_RESOLVERS`. Point it at your internal DNS server. If you omit it, the port's default
+  is `9.9.9.9 149.112.112.112 8.8.8.8 8.8.4.4` (upstream's `127.0.0.11` is Docker's embedded DNS and does not exist on Windows); public
+  resolvers cannot resolve internal names.
 
 ### 7.3 Test every backend from the BunkerWeb server first
 
@@ -1164,6 +1166,7 @@ away from 80/443 works the same way, but remember the router forward and `bwctl 
 | A service stops right after starting | Configuration error, port conflict, damaged installation | `bwctl logs service-<name>`; 12.2; re-run the installer (repair) |
 | Changes in `variables.env` have no effect | Not applied, or the scheduler rejected the configuration | `bwctl reload-scheduler`; scheduler log; `-CheckOnly` of the apply script |
 | `bwctl reload-scheduler`: "scheduler is not running" | Scheduler service stopped or crashed | `Start-Service bunkerweb-scheduler`; `bwctl logs service-scheduler` |
+| `bwctl reload-scheduler`: "Access denied" | Shell is not elevated | Use an elevated (administrator) PowerShell |
 | **502 Bad Gateway** | Backend unreachable, wrong port, firewall | Tests from 7.3; backend firewall; `REVERSE_PROXY_HOST` |
 | **504 Gateway Timeout** | Slow backend | Raise `REVERSE_PROXY_READ_TIMEOUT` / `_SEND_TIMEOUT` |
 | **403 Forbidden** in normal use | ModSecurity CRS false positive | `bwctl logs error` / UI reports → `SECURITY_MODE=detect` → exclusion in `configs\modsec\<svc>\` |

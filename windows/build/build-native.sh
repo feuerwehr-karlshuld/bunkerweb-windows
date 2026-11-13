@@ -267,9 +267,15 @@ copy_dll_closure() {
 		done < <(imports_in_prefix "$file")
 	done
 }
+# libssl is not imported by nginx.exe (OpenSSL is linked in statically) but the config generator loads it for its
+# ssl_ecdh_curve probe (patched in apply-windows-port.py, step 12c), so it is a root of the closure and must exist
+for dll in "$PREFIX_UCRT"/bin/libssl-3*.dll; do
+	[ -f "$dll" ] && cp "$dll" "$OUT/sbin/"
+done
+compgen -G "$OUT/sbin/libssl-3*.dll" > /dev/null || { echo "libssl-3*.dll is missing from sbin (ssl_ecdh_curve probe)" >&2; exit 1; }
 roots=()
 for binary in "$OUT/sbin/nginx.exe" "$OUT/sbin/lua51.dll" "$LUA_OUT/cjson.so" "$LUA_OUT/gd.so" \
-	"$OUT/bin/openssl.exe" "$OUT/bin/sqlite3.exe" "$OUT/deps/lib/libmaxminddb.so" "$OUT/sbin/"libmagic*.dll; do
+	"$OUT/bin/openssl.exe" "$OUT/bin/sqlite3.exe" "$OUT/deps/lib/libmaxminddb.so" "$OUT/sbin/"libmagic*.dll "$OUT/sbin/"libssl-3*.dll; do
 	if [ -f "$binary" ]; then roots+=("$binary"); fi
 done
 copy_dll_closure "${roots[@]}"

@@ -143,8 +143,23 @@ never replace each other).
 
 ## Current state
 
-*Last updated 2026-11-13. Update this section whenever the pipeline state changes.*
+*Last updated 2026-11-13 (ninth run analysed). Update this section whenever the pipeline state changes.*
 
+- **Ninth CI run:** the eighth run's curl fix **worked**: everything up to "bwctl status / test / reload" passed (healthz, proxy 200,
+  default server 301). It failed in `bwctl reload-scheduler` with `The scheduler is not running (error 5)`: error 5 is ACCESS_DENIED,
+  not "missing". The scheduler (SYSTEM) creates `Global\bunkerweb_scheduler_reload` with the default DACL of its token, which gives
+  Administrators read/execute but not EVENT_MODIFY_STATE. Fixes written, not yet re-run: `create_admin_event` in `bwsvc.py`
+  (explicit SDDL `D:(A;;0x1f0003;;;SY)(A;;0x1f0003;;;BA)`), `bwctl.py` prints "Access denied" for error 5. Other findings from the
+  same logs (all fixes unverified): (a) the scheduler's second generator run failed with `PermissionError [WinError 5]` in
+  `sync_tree.py` `os.replace(...modsecurity-rules.conf.modsec -> etc\nginx\...)`; root cause not proven (reader without
+  `FILE_SHARE_DELETE`, read-only attribute?), `_bw_replace` (step 8) retries up to 20 s and clears the read-only bit; (b) the
+  `ssl_ecdh_curve ... could not bind libssl` warning: Templator only looked for `libssl.so*`, step 12c now loads the shipped
+  `sbin\libssl-3*.dll` (`winmode=8`), `build-native.sh` ships and requires it; (c) `DNS_RESOLVERS` defaulted to Docker's `127.0.0.11`,
+  hence `WSARecv() failed (10054)`, failing DNSBL lookups and a slow `init_worker`: step 3d changes the default to the public
+  resolvers of the Linux packages. Benign warnings left alone: Pro licence key missing, no DNSBL ignore/whitelist URL configured,
+  nginx `[TIMER-0] worker is exiting` on reload, `bunkerweb-api` Stopped (Manual by design), and one `database is locked` retry of
+  the scheduler right after the UI service started (SQLite race that upstream's retry resolves). The `Diagnostics` step now has a
+  "Warnings and errors" group over all logs. Spamhaus may refuse queries from public resolvers, so some DNSBL error lines can remain.
 - **Eighth CI run:** the seventh run's `"w+b"` fix **worked**: `healthz` became `ok` ~20 s after start, firewall rule and all five
   listeners match the configured ports, and the reverse proxy to the backend returned the marker (HTTP 200). The first failing step was
   "Unknown hosts are rejected by the default server", a **test bug**, not a port bug: the default server (`DISABLE_DEFAULT_SERVER=no`)

@@ -133,6 +133,8 @@ kernel32.CreateEventW.restype = wintypes.HANDLE
 kernel32.CreateEventW.argtypes = (wintypes.LPVOID, wintypes.BOOL, wintypes.BOOL, wintypes.LPCWSTR)
 kernel32.SetEvent.argtypes = (wintypes.HANDLE,)
 kernel32.CloseHandle.argtypes = (wintypes.HANDLE,)
+kernel32.LocalFree.argtypes = (wintypes.HLOCAL,)
+kernel32.LocalFree.restype = wintypes.HLOCAL
 kernel32.WaitForSingleObject.argtypes = (wintypes.HANDLE, wintypes.DWORD)
 kernel32.WaitForSingleObject.restype = wintypes.DWORD
 kernel32.CreateJobObjectW.restype = wintypes.HANDLE
@@ -143,6 +145,35 @@ kernel32.GetCurrentProcess.restype = wintypes.HANDLE
 
 EVENT_MODIFY_STATE = 0x0002
 SYNCHRONIZE = 0x00100000
+
+
+class _SECURITY_ATTRIBUTES(ctypes.Structure):
+    _fields_ = (
+        ("nLength", wintypes.DWORD),
+        ("lpSecurityDescriptor", wintypes.LPVOID),
+        ("bInheritHandle", wintypes.BOOL),
+    )
+
+
+def create_admin_event(name: str):
+    """Named auto-reset event that SYSTEM and local Administrators may signal (EVENT_ALL_ACCESS).
+
+    With the default DACL of a SYSTEM service token, Administrators only get read/execute rights, so an admin shell
+    could not OpenEvent(EVENT_MODIFY_STATE) (error 5, ACCESS_DENIED). Falls back to the default DACL if the
+    descriptor cannot be built.
+    """
+    advapi32 = ctypes.WinDLL("advapi32", use_last_error=True)
+    convert = advapi32.ConvertStringSecurityDescriptorToSecurityDescriptorW
+    convert.argtypes = (wintypes.LPCWSTR, wintypes.DWORD, ctypes.POINTER(wintypes.LPVOID), wintypes.LPVOID)
+    convert.restype = wintypes.BOOL
+    psd = wintypes.LPVOID()
+    if not convert("D:(A;;0x1f0003;;;SY)(A;;0x1f0003;;;BA)", 1, ctypes.byref(psd), None):
+        return kernel32.CreateEventW(None, False, False, name)
+    try:
+        sa = _SECURITY_ATTRIBUTES(ctypes.sizeof(_SECURITY_ATTRIBUTES), psd, False)
+        return kernel32.CreateEventW(ctypes.byref(sa), False, False, name)
+    finally:
+        kernel32.LocalFree(psd)
 
 
 def log(component: str, message: str) -> None:
@@ -577,7 +608,7 @@ def component_scheduler() -> int:
 
     # Reload requests (bwctl reload-scheduler) arrive as a named event and are turned into the
     # SIGHUP handler of the scheduler (signal.SIGHUP is an alias of SIGBREAK, see sitecustomize).
-    event = kernel32.CreateEventW(None, False, False, SCHEDULER_RELOAD_EVENT)
+    event = create_admin_event(SCHEDULER_RELOAD_EVENT)
 
     def reload_listener():
         import _thread

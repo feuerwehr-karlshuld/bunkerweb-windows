@@ -714,8 +714,8 @@ jobs:
             Write-Host '::endgroup::'
           }
           if (Test-Path C:\bunkerweb-setup.log) {
-            Write-Host '::group::Installer log (C:\bunkerweb-setup.log, last 100 lines)'
-            Get-Content C:\bunkerweb-setup.log -Tail 100
+            Write-Host '::group::Installer log (C:\bunkerweb-setup.log, errors and [Run] entries only)'
+            Get-Content C:\bunkerweb-setup.log | Where-Object { $_ -match 'powershell|bwctl|Exception|[Ff]ailed|[Ee]rror|exit code|Running' -and $_ -notmatch 'Successfully installed the file' } | Select-Object -Last 80
             Write-Host '::endgroup::'
           }
 

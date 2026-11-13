@@ -115,6 +115,26 @@ insert_after(
     "  },\n",
 )
 
+# ---------------------------------------------------------------- 3c. no HTTP/3 (QUIC) on Windows
+# nginx for Windows has no http_v3_module: the `http3` directive, `listen ... quic` and the $http3 variable do not exist and
+# nginx refuses the whole configuration ("unknown directive http3"). HTTP3 defaults to yes upstream, so the blocks are
+# switched off for good (whatever HTTP3 says) and the connection limiter gets an always-empty key for the HTTP/3 zone.
+rep("common/confs/default-server-http.conf", 'HTTP3 == "yes"', "false", 1)
+rep("common/confs/server-http/ssl-certificate-lua.conf", 'HTTP3 == "yes"', "false", 1)
+LIMITCONN = "common/core/limit/confs/http/limitconn.conf"
+rep(LIMITCONN, 'map "$http2$http3" $v1ip {', 'map "$http2" $v1ip {', 1)
+rep(
+    LIMITCONN,
+    'map $http3 $v3ip {\n\t# This will be "h3" for HTTP/3 connections. Empty otherwise.\n\tdefault $binary_remote_addr;\n\t""      "";\n}',
+    'map $http2 $v3ip {\n\t# no HTTP/3 on Windows: always empty, so this limit never applies\n\tdefault "";\n}',
+    1,
+)
+rep("common/core/misc/plugin.json", '"default": "yes",\n      "help": "Support HTTP3 protocol', '"default": "no",\n      "help": "Not available on Windows (nginx has no HTTP/3 there). Support HTTP3 protocol', 1)
+
+# nginx resolves -e (the early error log) with its own code that only knows drive-letter paths: "/bunkerweb/..." would be
+# appended to the prefix. (error_log in nginx.conf is fine, nginx handles rooted paths there.)
+rep("bw/lua/bunkerweb/api.lua", "-t -e /var/log/bunkerweb/error.log", "-t -e C:/bunkerweb/var/log/bunkerweb/error.log", 1)
+
 # ---------------------------------------------------------------- 4. load the Windows shim first
 for rel in ("common/confs/init-lua.conf", "common/confs/init-stream-lua.conf"):
     rep(rel, "init_by_lua_block {\n", 'init_by_lua_block {\n\trequire "bunkerweb.wincompat"\n', 1)

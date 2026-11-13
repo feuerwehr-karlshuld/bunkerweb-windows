@@ -399,7 +399,7 @@ def component_nginx() -> int:
 
     log(c, "Starting nginx ...")
     proc = subprocess.Popen(
-        [NGINX_EXE, "-e", "/bunkerweb/var/log/bunkerweb/error.log"],
+        [NGINX_EXE, "-e", "C:/bunkerweb/var/log/bunkerweb/error.log"],
         cwd=ROOT_DIR,
         env=env,
         stdin=subprocess.DEVNULL,

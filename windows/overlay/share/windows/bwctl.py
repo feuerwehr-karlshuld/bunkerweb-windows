@@ -156,7 +156,7 @@ def cmd_firewall(_args) -> int:
 
 
 def cmd_test(_args) -> int:
-    return subprocess.run([NGINX_EXE, "-t", "-e", "/bunkerweb/var/log/bunkerweb/error.log"], cwd=ROOT_DIR).returncode
+    return subprocess.run([NGINX_EXE, "-t", "-e", "C:/bunkerweb/var/log/bunkerweb/error.log"], cwd=ROOT_DIR).returncode
 
 
 def cmd_logs(args) -> int:

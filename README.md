@@ -1205,7 +1205,7 @@ not at bunkerity/bunkerweb.
 | Limitation | Impact |
 |---|---|
 | One nginx worker, `select()` event model (nginx for Windows) | Fine for typical on-premise traffic; not for high-traffic sites. Keep `WORKER_PROCESSES=1` and the default `WORKER_CONNECTIONS` |
-| No HTTP/3 (QUIC), no `reuseport` | Leave `HTTP3=no` |
+| No HTTP/3 (QUIC), no `reuseport` | The port switches the HTTP/3 blocks off whatever `HTTP3` says (default `no`); the `$http3` limit zone never applies |
 | Paths fixed to `C:\bunkerweb` | The installer can't relocate BunkerWeb |
 | Lua libraries luasocket, luasec and `lua-resty-signal` are not included | Not used by BunkerWeb's core features. Third-party plugins that need them won't work |
 | External plugins that run Linux binaries or shell scripts | Only work if busybox provides the tool |

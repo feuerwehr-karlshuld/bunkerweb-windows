@@ -212,7 +212,7 @@ Things that usually need attention on upgrades:
 - **Single nginx worker, `select()` event model.** nginx for Windows does not scale like nginx on Linux. Each worker
   is limited to about 4096 sockets (`FD_SETSIZE=4096` at build time). That is plenty for a typical on-premise
   reverse proxy, but not for high-traffic sites.
-- **No HTTP/3 / QUIC**, no `reuseport`.
+- **No HTTP/3 / QUIC**, no `reuseport`. nginx has no `http_v3_module` here, so the `http3` directive, `listen ... quic` and `$http3` are unknown: `apply-windows-port.py` step 3c disables the templates' HTTP/3 blocks and gives the limiter an empty HTTP/3 key.
 - **Not built:** luasocket, luasec and `lua-resty-signal`. BunkerWeb's core plugins do not need them, but third-party
   plugins might.
 - **ModSecurity** is built from the vendored v3 sources with MSVC. The OWASP CRS is included. Performance on

@@ -137,6 +137,14 @@ never replace each other).
 
 *Last updated 2026-11-13. Update this section whenever the pipeline state changes.*
 
+- **Fifth CI run:** the fourth run's fixes **worked** (generator renders, `default-server-cert` job OK, no cp1252 errors, the
+  fail-fast step stopped after ~20 s with the service log tails, WinSW wrapper log wording `Started process <pid>` confirmed).
+  `smoke-test` still failed: nginx exited on `unknown directive "http3"` (nginx for Windows has no `http_v3_module`; upstream's
+  `HTTP3` defaults to yes), plus the alert `could not open error log file ... usr/share/bunkerweb//bunkerweb/var/log/...` (nginx's
+  `-e` only knows drive-letter paths and prepends the prefix to `/bunkerweb/...`; `error_log` in nginx.conf is fine). Fixes
+  written, not yet re-run: step 3c of `apply-windows-port.py` (HTTP/3 blocks off, `$http3` in `limitconn.conf` replaced, `HTTP3`
+  default `no`, `api.lua` `-e C:/...`) and `-e C:/bunkerweb/var/log/bunkerweb/error.log` in `bwsvc.py`/`bwctl.py`. `Diagnostics` now
+  filters the installer log. nginx stops at the first config error, so expect further config/module errors behind this one.
 - **Fourth CI run:** everything up to the installer passed; `smoke-test` failed: nginx never became healthy. Cause: the config
   generator died in `Templator` (`ValueError: cannot find context for 'fork'`, so no config, nginx exited and restarted in a loop),
   plus the scheduler's `default-server-cert` job hit `Invalid cache path` (Python 3.14: `Path('/bunkerweb/...').is_absolute()` is
@@ -146,7 +154,7 @@ never replace each other).
   The smoke test's "Services are running and nginx is healthy" step now **fails fast**: on every poll it fails when a service is
   Stopped twice in a row, when its WinSW wrapper PID changed, or when `<svc>.wrapper.log` has more than one `Started <pid>` line
   (WinSW restarted it after a crash), and it prints the tail of each service log before throwing. The `Started` pattern for the
-  wrapper log is a guess at WinSW 2.12's wording (PID tracking is the backup); check it against a real wrapper log.
+  wrapper log (`Started process <pid>`) was confirmed against a real WinSW 2.12 wrapper log in the fifth run.
 
 - **Third CI run** (after the path refactor and the nginx `binary` fix): `modsecurity`, `python` and `native` **passed**, so the
   nginx link works. `package` failed in "Download busybox-w32 and WinSW": `frippery.org` answered `403 Forbidden` to the runner

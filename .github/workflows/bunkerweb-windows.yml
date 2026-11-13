@@ -1,0 +1,510 @@
+# BunkerWeb for Windows - builds a native Windows installer from the bunkerweb submodule.
+#
+# The submodule (bunkerweb/) is never modified: every job copies bunkerweb/src to build/src and applies the
+# Windows port there (.github/actions/prepare-src -> windows/build/apply-windows-port.py).
+#
+#   modsecurity  libModSecurity.dll (MSVC 2022 + conan, ModSecurity's own build/win32)
+#   native       nginx.exe + modules, LuaJIT, Lua C modules, runtime DLLs (MSYS2 UCRT64 / GCC)
+#   python       private CPython + BunkerWeb Python dependencies
+#   package      staged C:\ tree + Inno Setup installer
+#   smoke-test   installs the result on a clean runner and proxies a request through BunkerWeb
+#   release      tags v<bunkerweb-version>-win<N> (e.g. v1.6.17-win1) publish a GitHub release
+#
+# See windows/README.md for the architecture of the port.
+
+name: BunkerWeb for Windows
+
+on:
+  workflow_dispatch:
+    inputs:
+      port_revision:
+        description: Port revision (installer version suffix -win<N>)
+        required: false
+        default: "1"
+  push:
+    branches: [main]
+    tags: ["v*"]
+    paths:
+      - "windows/**"
+      - "bunkerweb"
+      - ".gitmodules"
+      - ".github/workflows/bunkerweb-windows.yml"
+      - ".github/actions/**"
+  pull_request:
+    paths:
+      - "windows/**"
+      - "bunkerweb"
+      - ".gitmodules"
+      - ".github/workflows/bunkerweb-windows.yml"
+      - ".github/actions/**"
+
+permissions:
+  contents: read
+
+concurrency:
+  group: bunkerweb-windows-${{ github.ref }}
+  cancel-in-progress: ${{ !startsWith(github.ref, 'refs/tags/') }}
+
+defaults:
+  run:
+    shell: pwsh
+
+env:
+  # BunkerWeb's Linux packages use Python 3.14; change here if a dependency has no wheel for it yet
+  PYTHON_VERSION: "3.14"
+  BUSYBOX_URL: https://frippery.org/files/busybox/busybox-w64-FRP-6354-g5f09fb446.exe
+  BUSYBOX_SHA256: 95343c871869cc0ab57ecec26b2f9af0370eb9c954f7e5ddd017163e4e0d09a0
+  WINSW_URL: https://github.com/winsw/winsw/releases/download/v2.12.0/WinSW.NET461.exe
+  WINSW_SHA256: b5066b7bbdfba1293e5d15cda3caaea88fbeab35bd5b38c41c913d492aadfc4f
+
+jobs:
+  # ------------------------------------------------------------------------------------------ ModSecurity (MSVC)
+  modsecurity:
+    runs-on: windows-2022
+    timeout-minutes: 150
+    steps:
+      - name: Git settings (keep LF, allow long paths)
+        run: |
+          git config --global core.autocrlf false
+          git config --global core.longpaths true
+
+      - uses: actions/checkout@v7
+        with:
+          submodules: true
+
+      - uses: actions/setup-python@v7
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+
+      - uses: ./.github/actions/prepare-src
+
+      - name: Install conan
+        run: python -m pip install --upgrade "conan>=2.27.1,<3"
+
+      - name: Cache conan packages
+        uses: actions/cache@v6
+        with:
+          path: ~/.conan2/p
+          key: conan-msvc2022-${{ hashFiles('bunkerweb/src/deps/src/modsecurity/build/win32/conanfile.txt') }}
+
+      - name: Build libModSecurity.dll
+        run: ./windows/build/build-modsecurity.ps1 -Src build/src -Out build/modsecurity
+
+      - uses: actions/upload-artifact@v7
+        with:
+          name: modsecurity
+          path: build/modsecurity
+          if-no-files-found: error
+          retention-days: 7
+
+  # ------------------------------------------------------------------------------------------ nginx & co (MSYS2 UCRT64)
+  native:
+    needs: modsecurity
+    runs-on: windows-2022
+    timeout-minutes: 90
+    steps:
+      - name: Git settings (keep LF, allow long paths)
+        run: |
+          git config --global core.autocrlf false
+          git config --global core.longpaths true
+
+      - uses: actions/checkout@v7
+        with:
+          submodules: true
+
+      - uses: actions/setup-python@v7
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+
+      - uses: ./.github/actions/prepare-src
+
+      - uses: actions/download-artifact@v8
+        with:
+          name: modsecurity
+          path: build/modsecurity
+
+      - uses: msys2/setup-msys2@v2
+        with:
+          msystem: UCRT64
+          update: true
+          install: >-
+            base-devel
+            mingw-w64-ucrt-x86_64-gcc
+            mingw-w64-ucrt-x86_64-binutils
+            mingw-w64-ucrt-x86_64-tools-git
+            mingw-w64-ucrt-x86_64-pcre2
+            mingw-w64-ucrt-x86_64-zlib
+            mingw-w64-ucrt-x86_64-openssl
+            mingw-w64-ucrt-x86_64-libgd
+            mingw-w64-ucrt-x86_64-libmaxminddb
+            mingw-w64-ucrt-x86_64-file
+            mingw-w64-ucrt-x86_64-sqlite3
+
+      - name: Build nginx, LuaJIT and Lua modules
+        shell: msys2 {0}
+        run: bash windows/build/build-native.sh build/src build/modsecurity build/native
+
+      - uses: actions/upload-artifact@v7
+        with:
+          name: native
+          path: build/native
+          if-no-files-found: error
+          retention-days: 7
+
+  # ------------------------------------------------------------------------------------------ Python runtime
+  python:
+    runs-on: windows-2022
+    timeout-minutes: 60
+    steps:
+      - name: Git settings (keep LF, allow long paths)
+        run: |
+          git config --global core.autocrlf false
+          git config --global core.longpaths true
+
+      - uses: actions/checkout@v7
+        with:
+          submodules: true
+
+      - uses: actions/setup-python@v7
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+
+      - uses: ./.github/actions/prepare-src
+
+      # Rust (rustup) is preinstalled on the runner, in case a dependency has no wheel for this Python
+      - name: Build the Python runtime and dependencies
+        run: ./windows/build/build-python.ps1 -Src build/src -Windows windows -Out build/python
+
+      - uses: actions/upload-artifact@v7
+        with:
+          name: python
+          path: build/python
+          if-no-files-found: error
+          retention-days: 7
+
+  # ------------------------------------------------------------------------------------------ installer
+  package:
+    needs: [native, python]
+    runs-on: windows-2022
+    timeout-minutes: 45
+    outputs:
+      version: ${{ steps.version.outputs.version }}
+      revision: ${{ steps.version.outputs.revision }}
+    steps:
+      - name: Git settings (keep LF, allow long paths)
+        run: |
+          git config --global core.autocrlf false
+          git config --global core.longpaths true
+
+      - uses: actions/checkout@v7
+        with:
+          submodules: true
+
+      - uses: actions/setup-python@v7
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+
+      - uses: ./.github/actions/prepare-src
+
+      - name: Version
+        id: version
+        env:
+          INPUT_REVISION: ${{ inputs.port_revision }}
+        run: |
+          $version = (Get-Content bunkerweb/src/VERSION -Raw).Trim()
+          $revision = '0'
+          if ($env:GITHUB_REF_TYPE -eq 'tag') {
+            if ($env:GITHUB_REF_NAME -notmatch '^v(.+)-win(\d+)$') { throw "Release tags must look like v$version-win1 (got $env:GITHUB_REF_NAME)" }
+            if ($Matches[1] -ne $version) { throw "Tag $env:GITHUB_REF_NAME does not match the BunkerWeb submodule version $version" }
+            $revision = $Matches[2]
+          } elseif ($env:INPUT_REVISION) {
+            if ($env:INPUT_REVISION -notmatch '^\d+$') { throw "port_revision must be a number" }
+            $revision = $env:INPUT_REVISION
+          }
+          "version=$version" >> $env:GITHUB_OUTPUT
+          "revision=$revision" >> $env:GITHUB_OUTPUT
+          Write-Host "BunkerWeb $version, Windows port revision $revision"
+
+      - uses: actions/download-artifact@v8
+        with:
+          name: native
+          path: build/native
+
+      - uses: actions/download-artifact@v8
+        with:
+          name: python
+          path: build/python
+
+      - name: Download busybox-w32 and WinSW (pinned by SHA-256)
+        run: |
+          New-Item -ItemType Directory -Force build/tools | Out-Null
+          foreach ($tool in @(
+              @{ Url = $env:BUSYBOX_URL; Sha = $env:BUSYBOX_SHA256; File = 'build/tools/busybox.exe' },
+              @{ Url = $env:WINSW_URL;   Sha = $env:WINSW_SHA256;   File = 'build/tools/WinSW.exe' })) {
+            Invoke-WebRequest -Uri $tool.Url -OutFile $tool.File -UseBasicParsing
+            $hash = (Get-FileHash -Algorithm SHA256 $tool.File).Hash.ToLowerInvariant()
+            if ($hash -ne $tool.Sha) { throw "Checksum mismatch for $($tool.Url): $hash" }
+            Write-Host "$($tool.File): $hash"
+          }
+
+      - name: Stage the C:\ tree
+        run: >-
+          ./windows/build/stage.ps1
+          -Repo bunkerweb
+          -Src build/src
+          -Windows windows
+          -Native build/native
+          -Python build/python
+          -Busybox build/tools/busybox.exe
+          -WinSW build/tools/WinSW.exe
+          -Out build/stage
+
+      - name: Build the installer (Inno Setup 6)
+        run: |
+          $iscc = Join-Path ${env:ProgramFiles(x86)} 'Inno Setup 6\ISCC.exe'
+          if (-not (Test-Path $iscc)) {
+            choco install innosetup -y --no-progress
+            if ($LASTEXITCODE -ne 0) { throw 'Inno Setup installation failed' }
+          }
+          $root = (Get-Location).Path
+          & $iscc `
+            "/DAppVersion=${{ steps.version.outputs.version }}" `
+            "/DPortRevision=${{ steps.version.outputs.revision }}" `
+            "/DStageDir=$root\build\stage" `
+            "/DLicenseFile=$root\bunkerweb\LICENSE.md" `
+            "/DOutputDir=$root\dist" `
+            "$root\windows\installer\bunkerweb.iss"
+          if ($LASTEXITCODE -ne 0) { throw "ISCC failed with exit code $LASTEXITCODE" }
+          Push-Location dist
+          Get-ChildItem *.exe | ForEach-Object {
+            "$((Get-FileHash -Algorithm SHA256 $_).Hash.ToLowerInvariant())  $($_.Name)"
+          } | Set-Content -Encoding ascii SHA256SUMS.txt
+          Get-Content SHA256SUMS.txt
+          Pop-Location
+
+      - uses: actions/upload-artifact@v7
+        with:
+          name: installer
+          path: dist
+          if-no-files-found: error
+          compression-level: 0
+
+      # the staged tree is handy to inspect a build without installing it
+      - uses: actions/upload-artifact@v7
+        with:
+          name: stage
+          path: build/stage
+          retention-days: 5
+
+  # ------------------------------------------------------------------------------------------ smoke test
+  smoke-test:
+    needs: package
+    runs-on: windows-2022
+    timeout-minutes: 45
+    env:
+      SITE: app.smoke.test
+      MARKER: bunkerweb-windows-smoke-ok
+      UA: Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/130.0 Safari/537.36
+    steps:
+      - uses: actions/download-artifact@v8
+        with:
+          name: installer
+          path: dist
+
+      - uses: actions/setup-python@v7
+        with:
+          python-version: "3.12"
+
+      - name: Nothing may listen on 80/443 before the installation
+        run: |
+          $busy = Get-NetTCPConnection -State Listen -ErrorAction SilentlyContinue | Where-Object LocalPort -in 80, 443
+          if ($busy) { $busy | Format-Table; throw 'Ports 80/443 are already in use on the runner' }
+
+      - name: Start a test backend on 127.0.0.1:8081
+        run: |
+          New-Item -ItemType Directory -Force C:\smoke-backend | Out-Null
+          Set-Content -Encoding ascii C:\smoke-backend\index.html $env:MARKER
+          Start-Process -WindowStyle Hidden -FilePath (Get-Command python).Source `
+            -ArgumentList '-m', 'http.server', '8081', '--bind', '127.0.0.1', '--directory', 'C:\smoke-backend'
+          Start-Sleep -Seconds 2
+          (Invoke-WebRequest -UseBasicParsing http://127.0.0.1:8081/).Content
+
+      - name: Pre-seed C:\etc\bunkerweb\variables.env (configuration as code)
+        run: |
+          New-Item -ItemType Directory -Force C:\etc\bunkerweb | Out-Null
+          @(
+            "SERVER_NAME=$env:SITE"
+            'MULTISITE=yes'
+            'WORKER_PROCESSES=1'
+            'HTTP_PORT=80'
+            'HTTPS_PORT=443'
+            'API_LISTEN_IP=127.0.0.1'
+            'UI_HOST=http://127.0.0.1:7000'
+            'USE_BUNKERNET=no'
+            'SEND_ANONYMOUS_REPORT=no'
+            "${env:SITE}_USE_REVERSE_PROXY=yes"
+            "${env:SITE}_REVERSE_PROXY_URL=/"
+            "${env:SITE}_REVERSE_PROXY_HOST=http://127.0.0.1:8081"
+          ) | Set-Content -Encoding ascii C:\etc\bunkerweb\variables.env
+          Get-Content C:\etc\bunkerweb\variables.env
+
+      - name: Install (silent)
+        run: |
+          $setup = Get-ChildItem dist\*-setup.exe | Select-Object -First 1
+          Write-Host "Installing $($setup.Name)"
+          $p = Start-Process -Wait -PassThru -FilePath $setup.FullName `
+            -ArgumentList '/VERYSILENT', '/SUPPRESSMSGBOXES', '/NORESTART', '/LOG=C:\bunkerweb-setup.log', '/TASKS="startservices,webui,firewall"'
+          if ($p.ExitCode -ne 0) { throw "Setup failed with exit code $($p.ExitCode)" }
+          Get-Service bunkerweb-* | Format-Table Name, Status, StartType
+
+      - name: Services are running and nginx is healthy
+        run: |
+          foreach ($s in 'bunkerweb-nginx', 'bunkerweb-scheduler', 'bunkerweb-ui') {
+            $svc = Get-Service $s
+            if ($svc.Status -ne 'Running') { throw "$s is $($svc.Status)" }
+          }
+          $deadline = (Get-Date).AddMinutes(3)
+          $healthy = $false
+          do {
+            try {
+              $r = Invoke-WebRequest -UseBasicParsing -TimeoutSec 5 -Headers @{ Host = 'healthcheck.bunkerweb.io' } http://127.0.0.1:6000/healthz
+              Write-Host "healthz: $($r.Content.Trim())"
+              if ($r.Content.Trim() -eq 'ok') { $healthy = $true; break }
+            } catch { Write-Host "healthz: $($_.Exception.Message)" }
+            Start-Sleep -Seconds 5
+          } while ((Get-Date) -lt $deadline)
+          if (-not $healthy) { throw 'nginx did not become healthy (still loading?)' }
+
+      - name: Reverse proxy to the backend works
+        run: |
+          $deadline = (Get-Date).AddMinutes(5)
+          $ok = $false
+          do {
+            try {
+              $r = Invoke-WebRequest -UseBasicParsing -TimeoutSec 10 -SkipHttpErrorCheck -UserAgent $env:UA -Headers @{ Host = $env:SITE } http://127.0.0.1/
+              $body = "$($r.Content)".Trim()
+              Write-Host "HTTP $($r.StatusCode): $($body.Substring(0, [Math]::Min(120, $body.Length)))"
+              if ($r.StatusCode -eq 200 -and $body -like "*$env:MARKER*") { $ok = $true; break }
+            } catch { Write-Host $_.Exception.Message }
+            Start-Sleep -Seconds 10
+          } while ((Get-Date) -lt $deadline)
+          if (-not $ok) { throw "No proxied response from $env:SITE within 5 minutes" }
+          Write-Host 'Response headers:'
+          $r.Headers.GetEnumerator() | ForEach-Object { "  $($_.Key): $($_.Value)" }
+
+      - name: Unknown hosts are rejected by the default server
+        run: |
+          $r = Invoke-WebRequest -UseBasicParsing -TimeoutSec 10 -SkipHttpErrorCheck -UserAgent $env:UA -Headers @{ Host = 'unknown.smoke.test' } http://127.0.0.1/
+          Write-Host "HTTP $($r.StatusCode)"
+          if ($r.StatusCode -eq 200 -and "$($r.Content)" -like "*$env:MARKER*") { throw 'The default server proxied an unknown host' }
+
+      - name: bwctl status / test / reload / reload-scheduler
+        run: |
+          C:\usr\bin\bwctl.cmd status
+          if ($LASTEXITCODE -ne 0) { throw 'bwctl status failed' }
+          C:\usr\bin\bwctl.cmd test
+          if ($LASTEXITCODE -ne 0) { throw 'bwctl test (nginx -t) failed' }
+          C:\usr\bin\bwctl.cmd reload
+          if ($LASTEXITCODE -ne 0) { throw 'bwctl reload failed' }
+          C:\usr\bin\bwctl.cmd reload-scheduler
+          if ($LASTEXITCODE -ne 0) { throw 'bwctl reload-scheduler failed' }
+          Start-Sleep -Seconds 30
+          $r = Invoke-WebRequest -UseBasicParsing -TimeoutSec 10 -SkipHttpErrorCheck -UserAgent $env:UA -Headers @{ Host = $env:SITE } http://127.0.0.1/
+          if ($r.StatusCode -ne 200) { throw "Site broken after reload (HTTP $($r.StatusCode))" }
+
+      - name: Web UI answers on 127.0.0.1:7000
+        run: |
+          $deadline = (Get-Date).AddMinutes(3)
+          $code = 0
+          do {
+            try {
+              $r = Invoke-WebRequest -UseBasicParsing -TimeoutSec 10 -SkipHttpErrorCheck -MaximumRedirection 0 http://127.0.0.1:7000/
+              $code = [int]$r.StatusCode
+              Write-Host "UI: HTTP $code"
+            } catch { Write-Host "UI: $($_.Exception.Message)" }
+            if ($code -ge 200 -and $code -lt 500) { break }
+            Start-Sleep -Seconds 5
+          } while ((Get-Date) -lt $deadline)
+          if (-not ($code -ge 200 -and $code -lt 500)) { throw 'The web UI did not answer' }
+
+      - name: Restart survives (stop/start of all services)
+        run: |
+          C:\usr\bin\bwctl.cmd restart
+          if ($LASTEXITCODE -ne 0) { throw 'bwctl restart failed' }
+          Start-Sleep -Seconds 20
+          $deadline = (Get-Date).AddMinutes(3)
+          $code = 0
+          do {
+            try {
+              $code = [int](Invoke-WebRequest -UseBasicParsing -TimeoutSec 10 -SkipHttpErrorCheck -UserAgent $env:UA -Headers @{ Host = $env:SITE } http://127.0.0.1/).StatusCode
+              Write-Host "HTTP $code"
+            } catch { Write-Host $_.Exception.Message }
+            if ($code -eq 200) { break }
+            Start-Sleep -Seconds 5
+          } while ((Get-Date) -lt $deadline)
+          if ($code -ne 200) { throw 'Site not served after a restart' }
+
+      - name: Diagnostics
+        if: always()
+        run: |
+          Get-Service bunkerweb-* -ErrorAction SilentlyContinue | Format-Table Name, Status, StartType
+          Get-NetTCPConnection -State Listen -ErrorAction SilentlyContinue | Where-Object LocalPort -in 80, 443, 5000, 6000, 7000, 8888 | Format-Table LocalAddress, LocalPort, OwningProcess
+          Get-ChildItem C:\var\log\bunkerweb -Recurse -File -ErrorAction SilentlyContinue | ForEach-Object {
+            Write-Host "::group::$($_.FullName)"
+            Get-Content $_.FullName -Tail 150
+            Write-Host '::endgroup::'
+          }
+
+      - name: Collect logs and generated configuration
+        if: always()
+        run: |
+          New-Item -ItemType Directory -Force C:\smoke-artifacts | Out-Null
+          foreach ($p in 'C:\var\log\bunkerweb', 'C:\etc\nginx', 'C:\bunkerweb-setup.log', 'C:\etc\bunkerweb\variables.env') {
+            if (Test-Path $p) { Copy-Item -Recurse -Force $p C:\smoke-artifacts\ }
+          }
+          Get-ChildItem C:\var\tmp\bunkerweb -Filter *.error -ErrorAction SilentlyContinue | Copy-Item -Destination C:\smoke-artifacts\
+
+      - uses: actions/upload-artifact@v7
+        if: always()
+        with:
+          name: smoke-test-logs
+          path: C:\smoke-artifacts
+          retention-days: 14
+
+      - name: Uninstall
+        run: |
+          $uninstaller = 'C:\ProgramData\BunkerWeb\uninstall\unins000.exe'
+          Start-Process -Wait -FilePath $uninstaller -ArgumentList '/VERYSILENT', '/SUPPRESSMSGBOXES', '/NORESTART'
+          # the uninstaller relaunches itself from %TEMP%, wait for the real work to finish
+          $deadline = (Get-Date).AddMinutes(3)
+          while ((Get-Service bunkerweb-* -ErrorAction SilentlyContinue) -and (Get-Date) -lt $deadline) { Start-Sleep -Seconds 3 }
+          if (Get-Service bunkerweb-* -ErrorAction SilentlyContinue) { throw 'Services still registered after uninstall' }
+          if (-not (Test-Path C:\etc\bunkerweb\variables.env)) { throw 'Configuration was removed by the uninstaller' }
+          Write-Host 'Uninstalled, configuration kept.'
+
+  # ------------------------------------------------------------------------------------------ release
+  release:
+    if: startsWith(github.ref, 'refs/tags/v')
+    needs: [package, smoke-test]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/download-artifact@v8
+        with:
+          name: installer
+          path: dist
+
+      - uses: softprops/action-gh-release@v3
+        with:
+          files: |
+            dist/*.exe
+            dist/SHA256SUMS.txt
+          body: |
+            **BunkerWeb ${{ needs.package.outputs.version }} for Windows** (port revision ${{ needs.package.outputs.revision }}) - native Windows services, no containers.
+
+            This is an **unofficial** port, it is not supported by Bunkerity. BunkerWeb is licensed under the AGPLv3;
+            the complete corresponding source is this repository at this tag (Windows port in `windows/`) together with
+            the `bunkerweb` submodule commit it references.
+
+            Installation and configuration: see `README.md`.

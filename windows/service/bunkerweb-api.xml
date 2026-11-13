@@ -1,0 +1,29 @@
+<!-- BunkerWeb for Windows: external REST API (WinSW 2.12) - port of bunkerweb-api.service.
+     Installed but disabled by default, like on Linux. Enable with:
+       Set-Service bunkerweb-api -StartupType Automatic; Start-Service bunkerweb-api -->
+<service>
+  <id>bunkerweb-api</id>
+  <name>BunkerWeb (API)</name>
+  <description>BunkerWeb REST API (FastAPI, listens on 127.0.0.1:8888 by default, see C:\etc\bunkerweb\api.env)</description>
+  <executable>C:\usr\share\bunkerweb\python\python.exe</executable>
+  <arguments>C:\usr\share\bunkerweb\windows\bwsvc.py api</arguments>
+  <workingdirectory>C:\</workingdirectory>
+  <depend>bunkerweb-nginx</depend>
+  <env name="PATH" value="C:\usr\sbin;C:\usr\bin;C:\usr\share\bunkerweb\python;C:\usr\share\bunkerweb\python\Scripts;%PATH%" />
+  <env name="PYTHONPATH" value="C:\usr\share\bunkerweb\deps\python" />
+  <env name="OPENSSL_CONF" value="C:\usr\ssl\openssl.cnf" />
+  <env name="MAGIC" value="C:\usr\share\misc\magic.mgc" />
+  <env name="PYTHONUTF8" value="1" />
+  <env name="PYTHONIOENCODING" value="utf-8" />
+  <startmode>Manual</startmode>
+  <stoptimeout>30 sec</stoptimeout>
+  <stopparentprocessfirst>true</stopparentprocessfirst>
+  <onfailure action="restart" delay="10 sec" />
+  <onfailure action="restart" delay="30 sec" />
+  <resetfailure>1 hour</resetfailure>
+  <logpath>C:\var\log\bunkerweb\service</logpath>
+  <log mode="roll-by-size">
+    <sizeThreshold>10240</sizeThreshold>
+    <keepFiles>5</keepFiles>
+  </log>
+</service>

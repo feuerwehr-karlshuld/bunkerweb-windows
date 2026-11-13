@@ -1,0 +1,22 @@
+#!/usr/bin/env python3
+# BunkerWeb for Windows: certbot entry point (replaces the console_scripts launcher).
+#
+# Certbot decides between its POSIX and Windows code paths by trying "import fcntl" / "import pwd"
+# and by looking at os.geteuid & co. The POSIX shims installed for BunkerWeb (sitecustomize.py,
+# fcntl.py, pwd.py, grp.py) must therefore be invisible here, so certbot uses msvcrt/pywin32.
+import os
+import sys
+
+for _module in ("fcntl", "pwd", "grp"):
+    sys.modules[_module] = None  # makes "import fcntl" raise ImportError
+
+for _name in getattr(os, "_bw_shims", ()):
+    if hasattr(os, _name):
+        delattr(os, _name)
+if hasattr(os, "_bw_original_rename"):
+    os.rename = os._bw_original_rename
+
+from certbot.main import main  # noqa: E402
+
+if __name__ == "__main__":
+    sys.exit(main())

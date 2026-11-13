@@ -1,0 +1,219 @@
+# BunkerWeb for Windows (unofficial native port)
+
+This directory contains everything needed to build [BunkerWeb](https://github.com/bunkerity/bunkerweb) as a
+**native Windows application**. It runs as Windows services, without containers, VMs or WSL.
+
+The BunkerWeb sources are included as the git submodule [`../bunkerweb`](../bunkerweb). **The submodule is never modified.**
+Every build copies `bunkerweb/src` and applies the Windows changes to the copy. The GitHub Actions
+workflow [`.github/workflows/bunkerweb-windows.yml`](../.github/workflows/bunkerweb-windows.yml)
+produces an Inno Setup installer `bunkerweb-<version>-win<N>-x64-setup.exe`.
+
+> **Status:** experimental and unofficial. Bunkerity does not support it. The CI smoke test is meant to install
+> the build on a clean Windows Server 2022 runner and proxy a request through it, but this is
+> not a substitute for the upstream test suite. The pipeline was still being brought up when this was written, see
+> [`../AGENTS.md`](../AGENTS.md#current-state). Validate your own use case before relying on it.
+
+The operator documentation (installation, reverse proxy, Let's Encrypt) is in
+[`../README.md`](../README.md). Contributors and coding agents: read [`../AGENTS.md`](../AGENTS.md) first.
+
+---
+
+## How the port works
+
+BunkerWeb consists of:
+
+- **nginx** with OpenResty's Lua modules plus a large amount of Lua code;
+- a Python **scheduler** that generates the nginx configuration and runs jobs (Let's Encrypt, blacklists, ...);
+- a Flask **web UI**;
+- a FastAPI **API**.
+
+All of it is written for Linux. The port keeps BunkerWeb's own code and Linux layout and bridges the gaps:
+
+| Linux | Windows port |
+|---|---|
+| `/usr/share/bunkerweb`, `/etc/bunkerweb`, `/var/lib/bunkerweb`, ... | The same paths on drive `C:`. Every service runs with working directory `C:\`, so absolute POSIX paths resolve to `C:\usr\...`, `C:\etc\...`, `C:\var\...`. |
+| nginx + dynamic modules (OpenResty components) | `nginx.exe` built with MSYS2/GCC (UCRT). All modules are linked **statically**: lua, stream-lua, ndk, lua-upstream, headers-more, cookie-flag, brotli, ModSecurity-nginx. |
+| OpenSSL as a shared library used through LuaJIT FFI | OpenSSL is linked into `nginx.exe` (whole archive) and exported, so `ffi.C` finds `SSL_*` / `EVP_*`, as `lua-resty-openssl` expects. |
+| libmodsecurity.so | `libModSecurity.dll` built with MSVC 2022 using ModSecurity's own `build/win32` (conan). nginx links it through the plain C API (`msc_*`). |
+| `ffi.load("libz.so")`, `package.cpath` `*.so` | `wincompat.lua` translates library names and paths. The Lua C modules are real DLLs that keep their `.so` names. |
+| `io.popen` / `os.execute` of shell commands | `wincompat.lua` runs them through `busybox sh` (busybox-w32). |
+| `kill -HUP <nginx>` (reload) | nginx for Windows signals through named events `Global\ngx_<signal>_<pid>`. `wincompat.lua` and `bwsvc.py` use them. |
+| POSIX bits in Python (`fcntl`, `pwd`, `grp`, `os.getuid`, `os.kill(pid, 0)`, `SIGHUP`, ...) | `python-site/` shims, loaded through `sitecustomize`. |
+| systemd units + `start.sh` / `bunkerweb-scheduler.sh` / `bunkerweb-ui.sh` / `bunkerweb-api.sh` | `share/windows/bwsvc.py`, a Python port of those scripts, started by [WinSW](https://github.com/winsw/winsw) services. |
+| gunicorn | waitress (web UI) and uvicorn (API). |
+| `systemctl reload bunkerweb-scheduler` | `bwctl reload-scheduler`, which uses a named event and is mapped to the scheduler's SIGHUP handler. |
+
+The source-level changes to the copy of `bunkerweb/src` are anchored text replacements in
+[`build/apply-windows-port.py`](build/apply-windows-port.py):
+
+- no `load_module` lines;
+- `select` event model;
+- no `reuseport`;
+- the `wincompat` shim loaded first;
+- `api.lua` file locking;
+- crowdsec helpers;
+- `/proc/uptime`;
+- Let's Encrypt hook invocation;
+- the ModSecurity CMake library-only build;
+- nginx configure on win32.
+
+Each replacement checks how often its anchor occurs. The build fails with a list of every anchor that
+no longer matches, which is the signal to update the port after a BunkerWeb upgrade.
+
+### Directory layout
+
+```
+windows/
+  build/
+    apply-windows-port.py     patch a copy of bunkerweb/src (anchored, counted replacements)
+    build-modsecurity.ps1     libModSecurity.dll (MSVC 2022 + conan + CMake)
+    build-native.sh           nginx.exe, LuaJIT, cjson/gd, Lua libraries, runtime DLLs (MSYS2 UCRT64)
+    build-python.ps1          private CPython + BunkerWeb requirements (+ certbot DNS alias patch)
+    prepare-requirements.py   merges BunkerWeb's hashed requirement files (drops uvloop)
+    stage.ps1                 assembles the C:\ mirror tree
+  installer/bunkerweb.iss     Inno Setup 6 script
+  overlay/
+    src/bw/lua/bunkerweb/wincompat.lua     Lua/FFI compatibility layer (copied into the patched sources)
+    python-site/                           sitecustomize.py, fcntl.py, pwd.py, grp.py
+    share/windows/bwsvc.py                 service runner (nginx, scheduler, ui, api)
+    share/windows/bwctl.py                 operator helper (status, reload, logs, ...)
+    share/deps/python/bin/certbot          certbot entry point
+    bin/bwctl.cmd, bin/bwcli.cmd           command wrappers (C:\usr\bin is added to PATH)
+  service/bunkerweb-*.xml     WinSW service definitions
+```
+
+### Installed layout
+
+```
+C:\usr\share\bunkerweb\        BunkerWeb (same layout as the Linux packages) + python\ + windows\ + service\
+C:\usr\sbin\                   nginx.exe, lua51.dll, libModSecurity.dll, OpenSSL/PCRE2/... DLLs
+C:\usr\bin\                    busybox.exe, sh.exe, openssl.exe, sqlite3.exe, luajit.exe, bwctl.cmd, bwcli.cmd
+C:\etc\bunkerweb\              variables.env, scheduler.env, ui.env, api.env, configs\, plugins\   (kept)
+C:\etc\nginx\                  generated nginx configuration
+C:\var\lib\bunkerweb\          db.sqlite3, backups, job data                                      (kept)
+C:\var\cache\bunkerweb\        job cache, Let's Encrypt certificates                               (kept)
+C:\var\log\bunkerweb\          error.log, access.log, scheduler.log, ui.log, service\*.log        (kept)
+```
+
+Windows services:
+
+| Service | Start type | Purpose |
+|---|---|---|
+| `bunkerweb-nginx` | Automatic | nginx master process (`start.sh` equivalent) |
+| `bunkerweb-scheduler` | Automatic (delayed) | configuration generation and jobs (Let's Encrypt, ...) |
+| `bunkerweb-ui` | Automatic (delayed) / Disabled | web UI on `127.0.0.1:7000` |
+| `bunkerweb-api` | Manual | optional REST API on `127.0.0.1:8888` |
+
+---
+
+## Building
+
+### On GitHub Actions (normal way)
+
+The workflow runs on `windows-2022` runners:
+
+```mermaid
+flowchart TD
+    A[modsecurity: MSVC + conan] --> B[native: MSYS2 UCRT64 GCC]
+    C[python: CPython + pip] --> D[package: stage + Inno Setup]
+    B --> D
+    D --> E[smoke-test: install, proxy a request, reload, restart, uninstall]
+    E --> F[release: only for tags v*-winN]
+```
+
+**Triggers:**
+- `workflow_dispatch`, where you can set the port revision;
+- pushes to `main` that touch `windows/**`, the submodule pointer or the workflow;
+- pull requests that touch the same paths;
+- tags.
+
+**Artifacts:**
+- `installer`: the setup exe and `SHA256SUMS.txt`;
+- `stage`: the staged tree, useful to inspect a build;
+- `smoke-test-logs`: BunkerWeb logs and the generated nginx configuration from the test install.
+
+**Releases:** push a tag `v<bunkerweb-version>-win<N>`, for example `v1.6.17-win1`. The tag must match
+`bunkerweb/src/VERSION`. The release is only published when the smoke test passes.
+
+The first ModSecurity build compiles its conan dependencies (Poco, libcurl, libxml2, ...) and can take
+a long time. They are cached afterwards.
+
+### Locally
+
+There is no supported local build. You can reproduce it on a Windows machine with:
+
+- Visual Studio 2022 Build Tools;
+- CMake;
+- conan 2;
+- MSYS2 with the UCRT64 packages listed in the workflow;
+- Python 3.14;
+- Inno Setup 6.
+
+Run the same steps as the workflow, in this order:
+
+1. `prepare-src`;
+2. `build-modsecurity.ps1`;
+3. `build-native.sh` in the UCRT64 shell;
+4. `build-python.ps1`;
+5. `stage.ps1`;
+6. `ISCC`.
+
+---
+
+## Upgrading BunkerWeb
+
+1. Move the submodule to the new release tag:
+   ```sh
+   git -C bunkerweb fetch --tags
+   git -C bunkerweb checkout v1.6.18
+   git add bunkerweb
+   ```
+2. Push or open a PR and let the workflow run. If `apply-windows-port.py` reports anchors that no
+   longer match, adapt the replacements to the new upstream code.
+3. Check the smoke-test logs, then tag `v1.6.18-win1`.
+
+Things that usually need attention on upgrades:
+
+- new dependencies in `src/deps/deps.json` (nginx modules or Lua libraries in `build-native.sh`);
+- new Python requirements without Windows wheels;
+- new shell-outs in Lua or Python code.
+
+---
+
+## Known limitations
+
+- **Single nginx worker, `select()` event model.** nginx for Windows does not scale like nginx on Linux. Each worker
+  is limited to about 4096 sockets (`FD_SETSIZE=4096` at build time). That is plenty for a typical on-premise
+  reverse proxy, but not for high-traffic sites.
+- **No HTTP/3 / QUIC**, no `reuseport`.
+- **Not built:** luasocket, luasec and `lua-resty-signal`. BunkerWeb's core plugins do not need them, but third-party
+  plugins might.
+- **ModSecurity** is built from the vendored v3 sources with MSVC. The OWASP CRS is included. Performance on
+  Windows has not been profiled.
+- **Paths are fixed to drive `C:`.**
+- **External plugins** that execute Linux binaries or shell scripts will not work unless busybox provides the tool.
+- **Unofficial:** do not open issues at bunkerity/bunkerweb for problems of this port.
+
+## Licence
+
+BunkerWeb is licensed under the **GNU Affero General Public License v3.0** (see
+[`../bunkerweb/LICENSE.md`](../bunkerweb/LICENSE.md)). The Windows port is a modified version of BunkerWeb and is
+distributed under the same licence.
+
+If you distribute the installer, or let users interact with a modified BunkerWeb over a network, you must offer
+the **complete corresponding source**. That source is this repository, including `windows/` and the
+workflow, at the commit or tag the installer was built from, together with the referenced `bunkerweb`
+submodule commit.
+
+Keep this repository public, or provide the source in another way, whenever you distribute builds.
+
+Bundled third-party components keep their own licences, including:
+
+- nginx (BSD-2);
+- LuaJIT (MIT);
+- OpenSSL (Apache-2.0);
+- ModSecurity (Apache-2.0);
+- CPython (PSF);
+- busybox-w32 (GPLv2);
+- WinSW (MIT);
+- the MSYS2/MinGW runtime libraries (various).

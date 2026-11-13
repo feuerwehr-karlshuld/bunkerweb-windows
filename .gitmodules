@@ -1,0 +1,3 @@
+[submodule "bunkerweb"]
+	path = bunkerweb
+	url = https://github.com/bunkerity/bunkerweb.git

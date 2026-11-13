@@ -1,0 +1,27 @@
+<!-- BunkerWeb for Windows: nginx (WinSW 2.12) - port of bunkerweb.service / start.sh -->
+<service>
+  <id>bunkerweb-nginx</id>
+  <name>BunkerWeb (nginx)</name>
+  <description>BunkerWeb reverse proxy / WAF - nginx master process</description>
+  <executable>C:\usr\share\bunkerweb\python\python.exe</executable>
+  <arguments>C:\usr\share\bunkerweb\windows\bwsvc.py nginx</arguments>
+  <workingdirectory>C:\</workingdirectory>
+  <env name="PATH" value="C:\usr\sbin;C:\usr\bin;C:\usr\share\bunkerweb\python;C:\usr\share\bunkerweb\python\Scripts;%PATH%" />
+  <env name="PYTHONPATH" value="C:\usr\share\bunkerweb\deps\python" />
+  <env name="OPENSSL_CONF" value="C:\usr\ssl\openssl.cnf" />
+  <env name="MAGIC" value="C:\usr\share\misc\magic.mgc" />
+  <env name="PYTHONUTF8" value="1" />
+  <env name="PYTHONIOENCODING" value="utf-8" />
+  <startmode>Automatic</startmode>
+  <stoptimeout>30 sec</stoptimeout>
+  <stopparentprocessfirst>true</stopparentprocessfirst>
+  <onfailure action="restart" delay="10 sec" />
+  <onfailure action="restart" delay="30 sec" />
+  <onfailure action="restart" delay="60 sec" />
+  <resetfailure>1 hour</resetfailure>
+  <logpath>C:\var\log\bunkerweb\service</logpath>
+  <log mode="roll-by-size">
+    <sizeThreshold>10240</sizeThreshold>
+    <keepFiles>5</keepFiles>
+  </log>
+</service>

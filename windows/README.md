@@ -147,6 +147,12 @@ flowchart TD
 The first ModSecurity build compiles its conan dependencies (Poco, libcurl, libxml2, ...) and can take
 a long time. They are cached afterwards.
 
+**Build caches:** the three build jobs (`modsecurity`, `native`, `python`) cache their output. The cache key is made of the
+commit of the `bunkerweb` submodule, the files of this repository that influence that output (port script, build scripts, overlay
+files) and `CACHE_VERSION` in the workflow. A run on an unchanged source restores the output instead of rebuilding it, which
+turns a repeated run into a few minutes (package + smoke test). Changing the submodule or one of those files rebuilds only the
+affected jobs. To force a full rebuild, bump `CACHE_VERSION`. Caches that were not used for 7 days are evicted by GitHub.
+
 ### Locally
 
 There is no supported local build. You can reproduce it on a Windows machine with:

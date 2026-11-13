@@ -59,6 +59,16 @@ windows/service/*.xml       WinSW 2.x service definitions: bunkerweb-nginx, -sch
 `package` (stage, Inno Setup, `SHA256SUMS.txt`) -> `smoke-test` (silent install, proxy a request, bwctl checks, UI on :7000,
 restart, uninstall) -> `release` (tags only).
 
+- **Build caches:** `modsecurity`, `native` and `python` cache their output directory (`build/modsecurity|native|python`)
+  with `actions/cache`. Key = job + `CACHE_VERSION` (workflow `env`) + the commit of the `bunkerweb` submodule
+  (`git rev-parse HEAD:bunkerweb`) + `hashFiles(...)` of the repository files that influence that output. On an exact hit the build
+  steps (and, for `native`, MSYS2 and the modsecurity artifact download) are skipped, the artifact is still uploaded for the next
+  job. **When you add an input to a build script, add it to that job's `hashFiles(...)`**, otherwise a stale cache is served.
+  What is *not* in the keys (workflow/MSYS2 package list, runner image, unpinned tools such as conan, pywin32, tzdata): bump
+  `CACHE_VERSION`. `native`'s key includes modsecurity's inputs because nginx links its output; `python`'s key contains the exact
+  CPython version from `setup-python`. Cache entries are scoped per branch, tag runs restore what `main` saved, unused entries
+  expire after 7 days. `package` and `smoke-test` are never cached.
+
 - Every job: `core.autocrlf false` + `core.longpaths true`, checkout with submodules, setup-python, then `prepare-src`.
   LF endings matter: the anchored replacements match exact text including newlines.
 - Downloads are pinned and SHA-256 verified (busybox-w32, WinSW 2.12.0 `WinSW.NET461.exe`). Change URL and hash together.
@@ -128,6 +138,8 @@ restart, uninstall) -> `release` (tags only).
   `bunkerweb/src` on Linux (all changed `.py` files parse, second pass is a no-op). Nothing has run in CI since. Watch for: rewrite
   coverage (the step prints `NOTE` lines for skipped Linux paths, only `/usr/local/etc/nginx/nginx.conf` in `api.lua` is expected),
   nginx's compiled-in paths, and the new smoke-test step "Nothing is installed outside C:\bunkerweb".
+- **Build caches (unverified):** `modsecurity`, `native` and `python` now restore/save their output with `actions/cache` (see
+  Pipeline). Not run yet: the first run after this change is all misses, the second one is the first real test of the hit path.
 - **Next:** push, run the workflow, iterate on failures. Most likely trouble spots, roughly in order: nginx link step
   (OpenSSL whole-archive, libModSecurity import lib, module linking), Python 3.14 wheel availability, `stage.ps1`
   required-files check, installer script, runtime behaviour of the shims and `bwsvc.py` in the smoke test (reload via named

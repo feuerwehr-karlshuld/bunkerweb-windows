@@ -348,9 +348,11 @@ nginx health           ok
 internal api           ok
 ```
 
-- `nginx health: loading` together with the note `IS_LOADING=yes` means the configuration hasn't been applied yet. This
-  is normal on a fresh install without a pre-seeded `variables.env`. BunkerWeb shows a "loading" page until you apply
-  your own configuration (section 6).
+- `nginx health: loading` is normal for the first seconds (up to about a minute) after a start: nginx runs with a temporary
+  configuration that serves BunkerWeb's "Generating BunkerWeb config" page until the scheduler has pushed the real one.
+  If it stays `loading`, look at `bwctl logs scheduler`. If `bwctl status` also prints the note `IS_LOADING=yes`, the line
+  is in your `variables.env` (the default file of earlier versions of this port contained it, and the installer never
+  rewrites an existing `variables.env`): delete it and run `bwctl reload-scheduler`.
 - On first start the installer creates default `variables.env`, `scheduler.env` and `ui.env` files in `C:\bunkerweb\etc\bunkerweb\`
   if they don't exist yet.
 
@@ -1166,7 +1168,7 @@ away from 80/443 works the same way, but remember the router forward and `bwctl 
 
 | Symptom | Likely cause | Check / fix |
 |---|---|---|
-| Every site shows the BunkerWeb **loading page** | `IS_LOADING=yes` still in `variables.env`, or the configuration was never applied | Remove the line; `bwctl reload-scheduler`; `bwctl logs scheduler` |
+| Every site shows the BunkerWeb **loading page** | `IS_LOADING=yes` still in `variables.env` (default file of earlier port versions), or the scheduler never applied the configuration | Remove the line; `bwctl reload-scheduler`; `bwctl logs scheduler` |
 | A service stops right after starting | Configuration error, port conflict, damaged installation | `bwctl logs service-<name>`; 12.2; re-run the installer (repair) |
 | Changes in `variables.env` have no effect | Not applied, or the scheduler rejected the configuration | `bwctl reload-scheduler`; scheduler log; `-CheckOnly` of the apply script |
 | `bwctl reload-scheduler`: "scheduler is not running" | Scheduler service stopped or crashed | `Start-Service bunkerweb-scheduler`; `bwctl logs service-scheduler` |

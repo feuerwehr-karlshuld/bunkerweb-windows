@@ -565,6 +565,17 @@ jobs:
             if (-not (Test-Path "C:\bunkerweb\$d")) { throw "C:\bunkerweb\$d is missing" }
           }
 
+      - name: certbot loads all its plugins
+        run: |
+          # A plugin that fails to load (e.g. certbot_dns_transip without its .VERSION file) makes every `certbot certificates`,
+          # certonly and renew run exit non-zero, so no Let's Encrypt certificate is ever issued.
+          $env:PYTHONPATH = 'C:\bunkerweb\usr\share\bunkerweb\deps\python'
+          $env:PYTHONUTF8 = '1'
+          $d = Join-Path $env:RUNNER_TEMP 'certbot-plugins'
+          $out = & 'C:\bunkerweb\usr\share\bunkerweb\python\python.exe' 'C:\bunkerweb\usr\share\bunkerweb\deps\python\bin\certbot' plugins --config-dir "$d\etc" --work-dir "$d\work" --logs-dir "$d\log" 2>&1 | Out-String
+          Write-Host $out
+          if ($LASTEXITCODE -ne 0 -or $out -match 'errored while loading') { throw 'certbot could not load all of its plugins' }
+
       - name: Busybox applets used by BunkerWeb are available
         run: |
           # pushswap.lua, api.lua and the scheduler shell out to these (tar for the /confs push, uname for bunkernet)

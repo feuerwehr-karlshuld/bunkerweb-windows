@@ -45,8 +45,6 @@ PYTHON = sys.executable
 SCHEDULER_RELOAD_EVENT = "Global\\bunkerweb_scheduler_reload"
 
 VARIABLES_ENV_DEFAULT = """# BunkerWeb for Windows - global configuration (configuration as code)
-# remove IS_LOADING=yes when your config is ready
-IS_LOADING=yes
 SERVER_NAME=
 DNS_RESOLVERS=9.9.9.9 149.112.112.112 8.8.8.8 8.8.4.4
 # ports (restart the services after a change: bwctl restart; adapt the firewall rule: bwctl firewall)

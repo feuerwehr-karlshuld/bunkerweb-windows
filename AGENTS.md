@@ -168,6 +168,11 @@ never replace each other).
 history below refer to `apply-windows-port.py` as it was before the robustness refactor (the multi-line ones are now patches, see the ledger in
 `windows/patches/README.md`).*
 
+- **Field report 2026-11-14 (first real install, unverified fixes):** Let's Encrypt never issued because certbot aborted while loading
+  `certbot_dns_transip` (missing `.VERSION`; `build-python.ps1` now recreates it, `stage.ps1` requires it, the smoke test runs
+  `certbot plugins`). The default `variables.env` no longer contains `IS_LOADING=yes` (the nginx component's temporary config sets it
+  itself); existing `variables.env` files are never rewritten, so installs from earlier builds keep the line until removed by hand.
+
 - **Tenth CI run (first with the refactor + ninth-run fixes):** failed in "bwctl status / test / reload": `bwctl reload` got `503 a reload is in
   progress (.../reloading exists)` from upstream's reload serialisation (one reload at a time; the new workers remove the marker from a
   timer ~5 s after start, the API waits only 4 s). Cause **not proven**: most likely the scheduler's own reload shortly after start

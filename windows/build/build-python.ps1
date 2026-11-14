@@ -96,6 +96,19 @@ if (-not (Select-String -Quiet -Path (Join-Path $deps 'certbot\plugins\dns_commo
     throw 'certbot-dns-alias.patch was not applied'
 }
 
+# certbot-dns-transip reads its version from a .VERSION file (<package>\..\.VERSION, else <package>\.VERSION). Upstream ships it
+# through setup.py data_files, which a `pip --target` install does not put in either place, so certbot logs "The
+# 'certbot_dns_transip.dns_transip' plugin errored while loading" on every run. Recreate it from the installed metadata.
+$transipDist = Get-ChildItem -Path $deps -Directory -Filter 'certbot_dns_transip-*.dist-info' | Select-Object -First 1
+if (-not $transipDist) { throw 'certbot_dns_transip is not installed' }
+$transipVersion = (Select-String -Path (Join-Path $transipDist.FullName 'METADATA') -Pattern '^Version:\s*(\S+)' | Select-Object -First 1).Matches[0].Groups[1].Value
+if (-not $transipVersion) { throw 'could not read the certbot_dns_transip version' }
+$transipVersionFile = Join-Path $deps 'certbot_dns_transip\.VERSION'
+if (-not (Test-Path $transipVersionFile)) {
+    Set-Content -NoNewline -Encoding ascii -Path $transipVersionFile -Value $transipVersion
+}
+Write-Host "certbot_dns_transip $transipVersion (.VERSION ensured)"
+
 # ------------------------------------------------------------------ Windows shims (last, so pip itself is not affected)
 $site = Join-Path $py 'Lib\site-packages'
 Copy-Item (Join-Path $Windows 'overlay\python-site\*.py') $site
@@ -104,7 +117,7 @@ Get-ChildItem -Path $deps -Recurse -Directory -Filter '__pycache__' | Remove-Ite
 # smoke test: the shims and the main imports must load (python-magic needs libmagic from the native job)
 $env:PYTHONPATH = $deps
 Invoke-Checked 'import check' {
-    & $python -c "import sitecustomize, fcntl, pwd, grp, os; assert hasattr(os, '_bw_shims'); import sqlalchemy, flask, fastapi, certbot, waitress, uvicorn, cryptography; import win32api, win32security, ntsecuritycon; import certbot.compat.filesystem; print('imports ok')"
+    & $python -c "import sitecustomize, fcntl, pwd, grp, os; assert hasattr(os, '_bw_shims'); import sqlalchemy, flask, fastapi, certbot, waitress, uvicorn, cryptography; import win32api, win32security, ntsecuritycon; import certbot.compat.filesystem; import certbot_dns_transip.dns_transip; print('imports ok')"
 }
 Remove-Item Env:\PYTHONPATH
 

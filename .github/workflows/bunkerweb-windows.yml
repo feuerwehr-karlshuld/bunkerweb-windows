@@ -538,9 +538,23 @@ jobs:
           $setup = Get-ChildItem dist\*-setup.exe | Select-Object -First 1
           Write-Host "Installing $($setup.Name)"
           $p = Start-Process -Wait -PassThru -FilePath $setup.FullName `
-            -ArgumentList '/VERYSILENT', '/SUPPRESSMSGBOXES', '/NORESTART', '/LOG=C:\bunkerweb-setup.log', '/TASKS="startservices,webui,firewall"'
+            -ArgumentList '/VERYSILENT', '/SUPPRESSMSGBOXES', '/NORESTART', '/LOG=C:\bunkerweb-setup.log', '/TASKS="startservices,webui,firewall,defender"'
           if ($p.ExitCode -ne 0) { throw "Setup failed with exit code $($p.ExitCode)" }
           Get-Service bunkerweb-* | Format-Table Name, Status, StartType
+
+      - name: ModSecurity rule data files survived the installation
+        run: |
+          # Antivirus products have been seen deleting CRS data files (web-shells-php.data) that list web shell signatures:
+          # nginx then refuses the generated config ("Failed to open file"). Compare the installed tree with the staged one.
+          $rules = 'C:\bunkerweb\usr\share\bunkerweb\core\modsecurity\files\coreruleset-v4\rules'
+          foreach ($f in 'web-shells-php.data', 'php-errors.data', 'lfi-os-files.data') {
+            if (-not (Test-Path (Join-Path $rules $f))) {
+              Get-MpThreatDetection -ErrorAction SilentlyContinue | Format-List InitialDetectionTime, Resources
+              throw "$f is missing from the installed CRS (see Defender detections above, if any)"
+            }
+          }
+          $n = (Get-ChildItem -Recurse -File 'C:\bunkerweb\usr\share\bunkerweb\core\modsecurity\files').Count
+          Write-Host "CRS and plugin files installed: $n"
 
       - name: Nothing is installed outside C:\bunkerweb
         run: |

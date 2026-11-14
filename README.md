@@ -306,23 +306,27 @@ renewed at least one certificate.
 
 ### 5.1 Interactive
 
-Run the setup as Administrator. The wizard offers three tasks, all selected by default:
+Run the setup as Administrator. The wizard offers four tasks, all selected by default:
 
 | Task | Effect |
 |---|---|
 | Start the BunkerWeb services after installation | Starts nginx, scheduler (and UI) at the end |
 | Enable the web UI service | Sets `bunkerweb-ui` to Automatic. Without it the UI service is Disabled |
 | Allow inbound HTTP/HTTPS in Windows Firewall | Creates the rule group **BunkerWeb** (TCP `HTTP_PORT` and `HTTPS_PORT` from an existing `variables.env`, otherwise 80 and 443; all profiles) |
+| Exclude the ModSecurity rule files from Microsoft Defender scans | Adds the Defender exclusions `C:\bunkerweb\usr\share\bunkerweb\core\modsecurity` and `C:\bunkerweb\var\cache\bunkerweb\modsecurity` **before** the files are extracted (removed again on uninstall). Defender otherwise tends to delete the CRS data file `web-shells-php.data` (a list of web shell signatures), after which nginx refuses its configuration with `Failed to open file: 'web-shells-php.data'`. Only the rule directories are excluded, not nginx or Python |
+
+Other antivirus products cannot be configured by the installer: add the same two exclusions there before installing. The installer checks at the end that `web-shells-php.data` exists and warns (and logs) if it does not.
 
 The installer also adds `C:\bunkerweb\usr\bin` to the system `PATH`, so `bwctl` and `bwcli` work in **new** shells.
 
 ### 5.2 Silent / scripted
 
 ```powershell
-.\bunkerweb-1.6.17-win1-x64-setup.exe /VERYSILENT /SUPPRESSMSGBOXES /NORESTART /LOG=C:\bunkerweb-setup.log /TASKS="startservices,webui,firewall"
+.\bunkerweb-1.6.17-win1-x64-setup.exe /VERYSILENT /SUPPRESSMSGBOXES /NORESTART /LOG=C:\bunkerweb-setup.log /TASKS="startservices,webui,firewall,defender"
 ```
 
-Leave a task out of `/TASKS` to skip it, e.g. `/TASKS="startservices,firewall"` installs without the web UI.
+Leave a task out of `/TASKS` to skip it, e.g. `/TASKS="startservices,firewall,defender"` installs without the web UI. Scripts written for earlier
+revisions that pass their own `/TASKS` list need `defender` added, otherwise no exclusion is created.
 
 > Tip: you can create `C:\bunkerweb\etc\bunkerweb\variables.env` **before** running the installer (section 6). BunkerWeb then starts
 > directly with your configuration instead of the loading page. The CI smoke test installs this way.

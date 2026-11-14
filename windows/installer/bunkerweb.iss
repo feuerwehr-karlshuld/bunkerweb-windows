@@ -72,6 +72,7 @@ WelcomeLabel2=This will install BunkerWeb [ver] on your server as native Windows
 Name: "startservices"; Description: "Start the BunkerWeb services after installation"
 Name: "webui"; Description: "Enable the web UI service (listens on 127.0.0.1, port 7000 unless UI_HOST in variables.env says otherwise)"
 Name: "firewall"; Description: "Allow inbound HTTP/HTTPS (HTTP_PORT/HTTPS_PORT from variables.env, default TCP 80, 443) in Windows Firewall"
+Name: "defender"; Description: "Exclude the ModSecurity rule files (core\modsecurity, var\cache\bunkerweb\modsecurity) from Microsoft Defender scans, which otherwise deletes rule data such as web-shells-php.data"
 
 [Dirs]
 Name: "C:\bunkerweb\etc\bunkerweb"; Flags: uninsneveruninstall
@@ -108,7 +109,7 @@ Source: "{#StageDir}\var\tmp\bunkerweb\*.mmdb"; DestDir: "C:\bunkerweb\var\tmp\b
 Root: HKLM; Subkey: "SYSTEM\CurrentControlSet\Control\Session Manager\Environment"; ValueType: expandsz; ValueName: "Path"; ValueData: "{olddata};C:\bunkerweb\usr\bin"; Check: NeedsAddPath('C:\bunkerweb\usr\bin')
 
 [UninstallRun]
-Filename: "{#PS}"; Parameters: "-NoProfile -NonInteractive -ExecutionPolicy Bypass -Command ""foreach ($s in 'bunkerweb-ui','bunkerweb-api','bunkerweb-scheduler','bunkerweb-nginx') {{ if (Get-Service $s -ErrorAction SilentlyContinue) {{ Stop-Service $s -Force -ErrorAction SilentlyContinue; & ('{#Svc}\' + $s + '.exe') uninstall } }; Get-Process nginx,python,python3 -ErrorAction SilentlyContinue | Where-Object {{ $_.Path -like 'C:\bunkerweb\usr\*' } | Stop-Process -Force; Remove-NetFirewallRule -Group 'BunkerWeb' -ErrorAction SilentlyContinue"""; Flags: runhidden waituntilterminated; RunOnceId: "RemoveServices"
+Filename: "{#PS}"; Parameters: "-NoProfile -NonInteractive -ExecutionPolicy Bypass -Command ""foreach ($s in 'bunkerweb-ui','bunkerweb-api','bunkerweb-scheduler','bunkerweb-nginx') {{ if (Get-Service $s -ErrorAction SilentlyContinue) {{ Stop-Service $s -Force -ErrorAction SilentlyContinue; & ('{#Svc}\' + $s + '.exe') uninstall } }; Get-Process nginx,python,python3 -ErrorAction SilentlyContinue | Where-Object {{ $_.Path -like 'C:\bunkerweb\usr\*' } | Stop-Process -Force; Remove-NetFirewallRule -Group 'BunkerWeb' -ErrorAction SilentlyContinue; Remove-MpPreference -ExclusionPath 'C:\bunkerweb\usr\share\bunkerweb\core\modsecurity','C:\bunkerweb\var\cache\bunkerweb\modsecurity' -ErrorAction SilentlyContinue"""; Flags: runhidden waituntilterminated; RunOnceId: "RemoveServices"
 
 [UninstallDelete]
 Type: filesandordirs; Name: "{#BW}"
@@ -157,9 +158,31 @@ begin
   end;
 end;
 
+// Microsoft Defender flags the OWASP CRS data files that list web shell signatures (web-shells-php.data, ...) and removes
+// them while they are written. nginx then refuses its configuration ("Failed to open file: 'web-shells-php.data'").
+// The exclusion has to exist before the files are extracted, so it is set up here and not after the installation.
+// Other antivirus products cannot be configured from here, they need the same two exclusions by hand.
+procedure ExcludeRulesFromDefender();
+var
+  Code: Integer;
+begin
+  Code := RunPS('if (-not (Get-Command Add-MpPreference -ErrorAction SilentlyContinue)) { exit 3 }; ' +
+                '$p = ''C:\bunkerweb\usr\share\bunkerweb\core\modsecurity'',''C:\bunkerweb\var\cache\bunkerweb\modsecurity''; ' +
+                'try { Add-MpPreference -ExclusionPath $p -ErrorAction Stop } catch { Write-Output $_.Exception.Message; exit 1 }; ' +
+                'if (@($p | Where-Object { (Get-MpPreference).ExclusionPath -notcontains $_ }).Count) { exit 2 }');
+  case Code of
+    0: Log('Defender exclusions for the ModSecurity rule files are in place');
+    3: Log('Microsoft Defender cmdlets are not available, no exclusion added');
+  else
+    Log('WARNING: could not add the Defender exclusions (code ' + IntToStr(Code) + '), a policy or tamper protection may forbid it');
+  end;
+end;
+
 function PrepareToInstall(var NeedsRestart: Boolean): String;
 begin
   StopBunkerWeb();
+  if WizardIsTaskSelected('defender') then
+    ExcludeRulesFromDefender();
   Result := '';
 end;
 
@@ -169,6 +192,16 @@ var
 begin
   if CurStep <> ssPostInstall then
     exit;
+
+  // an antivirus (Defender without the exclusion, or a third party product) may have removed rule data while extracting
+  if not FileExists('C:\bunkerweb\usr\share\bunkerweb\core\modsecurity\files\coreruleset-v4\rules\web-shells-php.data') then
+  begin
+    Log('ERROR: web-shells-php.data is missing after the installation, an antivirus product most likely removed it');
+    SuppressibleMsgBox('The ModSecurity rule file web-shells-php.data is missing: an antivirus product removed it during the installation. ' +
+      'nginx will refuse its configuration until it is restored.' + #13#10#13#10 +
+      'Exclude C:\bunkerweb\usr\share\bunkerweb\core\modsecurity and C:\bunkerweb\var\cache\bunkerweb\modsecurity from the scanner ' +
+      '(Microsoft Defender: select the task "Exclude the ModSecurity rule files") and run the installer again.', mbError, MB_OK, IDOK);
+  end;
 
   // configuration and data contain secrets (API tokens, admin password, private keys)
   Exec(ExpandConstant('{sys}\icacls.exe'), '"C:\bunkerweb\etc\bunkerweb" /inheritance:r /grant:r *S-1-5-32-544:(OI)(CI)F *S-1-5-18:(OI)(CI)F', '', SW_HIDE, ewWaitUntilTerminated, Code);

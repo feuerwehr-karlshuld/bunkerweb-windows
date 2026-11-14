@@ -148,6 +148,9 @@ never replace each other).
   module required after it (real `ffi.C` -> ws2_32 -> ucrtbase, plus overrides); the scan-hazards `ffi.C symbol`/`ffi.load` entries
   list what upstream uses. Modules loaded *before* `init_by_lua` (resty.core) cannot be reached: that is why the shdict `free()` is a patch.
 - The submodule contains a few symlinks (mbedtls examples, brotli research); harmless on Windows.
+- **`pip --target` drops `data_files`**: certbot-dns-transip reads `.VERSION` (a `setup.py` data file) and logged "plugin errored while loading" in
+  every certbot run; `build-python.ps1` recreates `deps\python\certbot_dns_transip\.VERSION` from the dist-info and imports the plugin in the
+  import check (unverified in CI). Other plugins that read data files next to their package would need the same.
 - Let's Encrypt data lives in `C:\bunkerweb\var\cache\bunkerweb\letsencrypt` (`/var/cache/bunkerweb/letsencrypt` upstream).
 - Upstream UI/API use gunicorn; the port uses waitress (UI) and uvicorn without uvloop (API).
 - **Python >= 3.13: a rooted path without drive (`/bunkerweb/...`, what the path rewrite produces) is not absolute on Windows**

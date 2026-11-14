@@ -55,6 +55,9 @@ Copy-Tree "$Src\common\api"  "$bw\api"
 Copy-Tree "$Src\common\cli"  "$bw\cli"
 Copy-Tree "$Src\common\confs" "$bw\confs"
 Copy-Tree "$Src\common\core" "$bw\core"
+$srcFiles = (Get-ChildItem -Recurse -File -Force "$Src\common\core").Count
+$dstFiles = (Get-ChildItem -Recurse -File -Force "$bw\core").Count
+if ($srcFiles -ne $dstFiles) { throw "core/: $srcFiles source files, $dstFiles staged (something was dropped or removed while copying)" }
 Copy-Tree "$Src\common\db"   "$bw\db"
 Copy-Tree "$Src\common\gen"  "$bw\gen"
 Copy-Tree "$Src\common\helpers" "$bw\helpers"

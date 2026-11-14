@@ -8,10 +8,13 @@
 #   python       private CPython + BunkerWeb Python dependencies
 #   package      staged C:\bunkerweb tree + Inno Setup installer
 #   smoke-test   installs the result on a clean runner and proxies a request through BunkerWeb
-#   release      publishes the installer as a GitHub release named after the bunkerweb submodule version (main only):
-#                smoke-test green -> release + tag v<version> (e.g. v1.6.17), the latest release, replaces the previous one;
-#                smoke-test red   -> DRAFT release + tag v<version>-RC with installer and smoke-test logs, replaces only
-#                the previous draft. The two kinds never touch each other.
+#   release      publishes the installer as a GitHub release (main only), one release per port revision of a bunkerweb version:
+#                smoke-test green -> release + tag v<version>-win<N> (e.g. v1.6.17-win2), the latest release; earlier
+#                                    revisions stay untouched;
+#                smoke-test red   -> DRAFT release + tag v<version>-win<N>-RC with installer and smoke-test logs, replaces
+#                                    only the previous draft of that revision. The two kinds never touch each other.
+#                <N> is assigned by the package job: highest published revision of this bunkerweb version + 1 (the legacy
+#                tag v<version> counts as revision 1); a rerun on the same commit keeps the revision it already has.
 #
 # See windows/README.md for the architecture of the port.
 #
@@ -33,9 +36,9 @@ on:
   workflow_dispatch:
     inputs:
       port_revision:
-        description: Port revision (installer version suffix -win<N>)
+        description: Port revision (installer version suffix -win<N>); empty = next free revision of this BunkerWeb version. An already published revision is replaced.
         required: false
-        default: "1"
+        default: ""
   push:
     branches: [main]
 
@@ -325,12 +328,34 @@ jobs:
         id: version
         env:
           INPUT_REVISION: ${{ inputs.port_revision }}
+          GH_TOKEN: ${{ github.token }}
         run: |
           $version = (Get-Content bunkerweb/src/VERSION -Raw).Trim()
-          $revision = '1'
           if ($env:INPUT_REVISION) {
             if ($env:INPUT_REVISION -notmatch '^\d+$') { throw "port_revision must be a number" }
             $revision = $env:INPUT_REVISION
+          } else {
+            # Next free revision of this BunkerWeb version: published releases v<version>-win<N> (the legacy tag
+            # v<version> counts as revision 1). Drafts (-RC) are not counted, so a failed revision is retried under
+            # the same number. A rerun on a commit that already has a release keeps that release's revision, which
+            # also keeps the package cache key stable.
+            $rows = gh api --paginate "repos/$env:GITHUB_REPOSITORY/releases?per_page=100" `
+              --jq '.[] | select(.draft | not) | [.tag_name, .target_commitish] | @tsv'
+            if ($LASTEXITCODE -ne 0) { throw "could not list the releases (gh exit code $LASTEXITCODE)" }
+            $pattern = '^v' + [regex]::Escape($version) + '(?:-win(\d+))?$'
+            $max = 0
+            $same = 0
+            foreach ($row in @($rows)) {
+              $tag, $target = ($row -split "`t")
+              if ($tag -match $pattern) {
+                $n = if ($Matches[1]) { [int]$Matches[1] } else { 1 }
+              } else {
+                continue
+              }
+              if ($n -gt $max) { $max = $n }
+              if ($target -eq $env:GITHUB_SHA -and $n -gt $same) { $same = $n }
+            }
+            $revision = if ($same -gt 0) { "$same" } else { "$($max + 1)" }
           }
           "version=$version" >> $env:GITHUB_OUTPUT
           "revision=$revision" >> $env:GITHUB_OUTPUT
@@ -833,11 +858,14 @@ jobs:
   # ------------------------------------------------------------------------------------------ release
   # Runs on main (push or manual dispatch) after a smoke test that either passed or failed (not when it was skipped or
   # cancelled):
-  #   passed -> release   tag v<bunkerweb version>      (the latest release)
-  #   failed -> draft     tag v<bunkerweb version>-RC  (installer + smoke-test logs)
-  # The previous release of the same kind (same tag AND same draft state) is deleted first, together with its tag and
-  # assets, so each kind always has exactly one current release. A draft never touches the real release and vice versa.
-  # The tag is recreated on the commit that was built (the release API creates it from target_commitish).
+  #   passed -> release   tag v<bunkerweb version>-win<N>      (the latest release)
+  #   failed -> draft     tag v<bunkerweb version>-win<N>-RC  (installer + smoke-test logs)
+  # <N> is the port revision chosen by the package job, so every successful build of a new commit is a new release
+  # and earlier releases are kept. Only a release/draft with exactly the same tag AND draft state (a rerun of the same
+  # revision, or the draft of a failed attempt) is deleted first, together with its tag and assets. A draft never
+  # touches a real release and vice versa. After a real release is published, the -RC draft of the same revision
+  # (left by earlier failed attempts) is deleted.
+  # The tag is created on the commit that was built (the release API creates it from target_commitish).
   release:
     if: >-
       ${{ always()
@@ -866,12 +894,12 @@ jobs:
         run: |
           set -euo pipefail
           if [ "$SMOKE_RESULT" = success ]; then
-            echo "tag=v${VERSION}" >> "$GITHUB_OUTPUT"
-            echo "name=BunkerWeb ${VERSION} for Windows" >> "$GITHUB_OUTPUT"
+            echo "tag=v${VERSION}-win${REVISION}" >> "$GITHUB_OUTPUT"
+            echo "name=BunkerWeb ${VERSION} for Windows (revision ${REVISION})" >> "$GITHUB_OUTPUT"
             echo "draft=false" >> "$GITHUB_OUTPUT"
           else
-            echo "tag=v${VERSION}-RC" >> "$GITHUB_OUTPUT"
-            echo "name=BunkerWeb ${VERSION}-RC for Windows" >> "$GITHUB_OUTPUT"
+            echo "tag=v${VERSION}-win${REVISION}-RC" >> "$GITHUB_OUTPUT"
+            echo "name=BunkerWeb ${VERSION} for Windows (revision ${REVISION}, RC)" >> "$GITHUB_OUTPUT"
             echo "draft=true" >> "$GITHUB_OUTPUT"
           fi
 
@@ -897,7 +925,8 @@ jobs:
           fi
           ls -l dist
 
-      - name: Remove the previous release of the same kind
+      # same tag + same draft state only: earlier revisions are never touched
+      - name: Remove a previous attempt of this revision
         shell: bash
         env:
           TAG: ${{ steps.names.outputs.tag }}
@@ -946,3 +975,19 @@ jobs:
             dist/*.exe
             dist/SHA256SUMS.txt
             dist/smoke-test-logs.zip
+
+      # the revision is now released: drop the draft(s) of its failed attempts
+      - name: Remove the RC draft of this revision
+        if: steps.names.outputs.draft != 'true'
+        shell: bash
+        env:
+          RC_TAG: v${{ needs.package.outputs.version }}-win${{ needs.package.outputs.revision }}-RC
+        run: |
+          set -euo pipefail
+          gh api --paginate "repos/${GH_REPO}/releases?per_page=100" \
+            | jq -r --arg tag "$RC_TAG" '.[] | select(.tag_name == $tag and .draft == true) | .id' \
+            | while read -r id; do
+                echo "Deleting draft release $id ($RC_TAG)"
+                gh api -X DELETE "repos/${GH_REPO}/releases/${id}"
+              done
+          gh api -X DELETE "repos/${GH_REPO}/git/refs/tags/${RC_TAG}" 2>/dev/null && echo "Deleted tag $RC_TAG" || true

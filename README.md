@@ -79,7 +79,7 @@ older nginx + win-acme setup that this replaces (section 4).
 Milestones, in order:
 
 1. **Green CI pipeline**: every job (modsecurity, native, python, package, smoke-test) passes on `windows-2022`.
-2. **First release** `v1.6.17`, published automatically once the smoke test passes (a failing smoke test only produces the draft `v1.6.17-RC`).
+2. **First release** `v1.6.17-win1`, published automatically once the smoke test passes (a failing smoke test only produces the draft `v1.6.17-win1-RC`).
 3. **Trial on a non-critical server**: install, Let's Encrypt *staging* end to end, a few real backends, reboot and upgrade tests.
 4. **Production cutover** following [section 4](#4-migrating-from-the-existing-nginx--win-acme-setup), with rollback ready.
 5. **Routine upgrades** to new BunkerWeb releases ([section 11.5](#115-upgrading-bunkerweb)).
@@ -217,9 +217,10 @@ Edit files there from an **elevated** PowerShell or editor.
 The installer is produced by the GitHub Actions workflow
 [`.github/workflows/bunkerweb-windows.yml`](.github/workflows/bunkerweb-windows.yml) in this repository:
 
-- **Releases** (recommended): the release is named after the BunkerWeb version it contains (tag `v1.6.17`) and carries
-  `bunkerweb-1.6.17-win1-x64-setup.exe` and `SHA256SUMS.txt` on the repository's *Releases* page. A newer build of the same
-  BunkerWeb version replaces it. A release is only created when the automated smoke test (install → proxy request →
+- **Releases** (recommended): each build is a release named after the BunkerWeb version it contains and the port revision
+  (tag `v1.6.17-win1`, then `v1.6.17-win2`, ...) and carries `bunkerweb-1.6.17-win1-x64-setup.exe` and `SHA256SUMS.txt` on the
+  repository's *Releases* page. A newer build of the same BunkerWeb version is a new revision; earlier revisions are kept.
+  A release is only created when the automated smoke test (install → proxy request →
   reload → restart → uninstall) has passed; a failed smoke test only yields a *draft* `-RC` release (visible to maintainers
   only), which must not be used. *(No release exists until the pipeline is green, see [project status](#project-status).)*
 - **CI builds**: *Actions* → *BunkerWeb for Windows* → a successful run → artifact `installer`. To build on demand, use

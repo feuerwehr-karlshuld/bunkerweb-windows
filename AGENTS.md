@@ -69,10 +69,14 @@ windows/service/*.xml       WinSW 2.x service definitions: bunkerweb-nginx, -sch
 
 `modsecurity` (MSVC/conan, slow, cached) -> `native` (MSYS2/GCC, needs the modsecurity artifact) and `python` (parallel) ->
 `package` (stage, Inno Setup, `SHA256SUMS.txt`) -> `smoke-test` (silent install, proxy a request, bwctl checks, UI on :7000,
-restart, uninstall) -> `release` (main only; smoke test green: release `v<bunkerweb-version>`, e.g. `v1.6.17`, marked latest; smoke test
-red: **draft** `v<bunkerweb-version>-RC` with installer and `smoke-test-logs.zip`. Each run deletes the previous release of the
-same kind (same tag and draft state, incl. its tag and assets) and recreates it on the built commit; drafts and real releases
-never replace each other).
+restart, uninstall) -> `release` (main only; smoke test green: release `v<bunkerweb-version>-win<N>`, e.g. `v1.6.17-win2`, marked latest;
+smoke test red: **draft** `v<bunkerweb-version>-win<N>-RC` with installer and `smoke-test-logs.zip`. Every new revision is a new release,
+earlier ones are kept. Only a release/draft with the same tag and draft state (rerun of that revision, retry after a failed smoke
+test) is deleted, incl. its tag and assets, and recreated on the built commit; drafts and real releases never replace each other,
+but publishing a real release deletes the `-RC` draft of the same revision left by earlier failed attempts).
+`<N>` is chosen by the `package` job's `Version` step: the `port_revision` input if given, else the highest published revision of this
+bunkerweb version + 1 (the legacy tag `v<version>` counts as 1, drafts are ignored), or the revision of the published release whose
+target commit is the current one (a rerun keeps its number).
 
 - **Build caches:** `modsecurity`, `native` and `python` cache their output directory (`build/modsecurity|native|python`)
   and `package` caches the finished installer (`dist/`: setup exe + `SHA256SUMS.txt`) with `actions/cache`. Key = job + `CACHE_VERSION` (workflow `env`) + the commit of the `bunkerweb` submodule
@@ -91,7 +95,7 @@ never replace each other).
     `WINSW_SHA256` + `hashFiles('windows/**', '.github/actions/**')`. On a hit, prepare-src, both artifact downloads, the tool
     download, stage and ISCC are skipped and the restored `dist/` is uploaded as the `installer` artifact (the `stage` artifact
     does not exist then). The `Version` step still runs, so the `release` job is unaffected. The revision is the `port_revision`
-    input of a manual run, else `1`. **The workflow file itself is not in any key:** changing the package,
+    input of a manual run, else the next free one (see above). **The workflow file itself is not in any key:** changing the package,
     stage or ISCC steps or the tool download logic needs a `CACHE_VERSION` bump; editing only smoke-test steps keeps the hit.
   The cache is saved by an explicit `actions/cache/save` step right after a successful build (the restore is
   `actions/cache/restore`), so a failing artifact upload or failing later jobs do not lose it. The conan packages of the
@@ -102,8 +106,8 @@ never replace each other).
   LF endings matter: the anchored replacements match exact text including newlines.
 - Downloads are pinned and SHA-256 verified (busybox-w32, WinSW 2.12.0 `WinSW.NET461.exe`). Change URL and hash together.
 - `PYTHON_VERSION` is `3.14` (what BunkerWeb's Linux packages use). If a dependency has no cp314 wheel, switch to `3.13`.
-- Release/tag format: `v<VERSION>` (release) and `v<VERSION>-RC` (draft); `<VERSION>` is `bunkerweb/src/VERSION` of the submodule.
-  The installer file name still carries the port revision (`-win<N>`).
+- Release/tag format: `v<VERSION>-win<N>` (release) and `v<VERSION>-win<N>-RC` (draft); `<VERSION>` is `bunkerweb/src/VERSION` of the submodule,
+  `<N>` the port revision, also in the installer file name (`-win<N>`). Revisions accumulate, they are not overwritten.
 - Artifacts: `modsecurity`, `native`, `python`, `stage`, `installer`, `smoke-test-logs` (first place to look after a failure).
 
 ## How to work on a change
@@ -318,7 +322,7 @@ history below refer to `apply-windows-port.py` as it was before the robustness r
   (OpenSSL whole-archive, libModSecurity import lib, module linking), Python 3.14 wheel availability, `stage.ps1`
   required-files check, installer script, runtime behaviour of the shims and `bwsvc.py` in the smoke test (reload via named
   events, certbot invocation, WinSW service dependencies).
-- After a green run (the release `v1.6.17` appears by itself): trial on a non-critical server including a Let's Encrypt *staging* issuance.
+- After a green run (the release `v1.6.17-win1` appears by itself): trial on a non-critical server including a Let's Encrypt *staging* issuance.
 - Operator guide and installer have never run on a real server. Do not describe anything as "tested" beyond what the smoke test
   in a green CI run covers.
 

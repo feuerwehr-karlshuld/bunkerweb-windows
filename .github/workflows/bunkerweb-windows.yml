@@ -757,8 +757,25 @@ jobs:
           }
           Get-ChildItem C:\bunkerweb\var\tmp\bunkerweb -Filter *.error -ErrorAction SilentlyContinue | Copy-Item -Destination C:\smoke-artifacts\
 
+      # Uploading the logs talks to GitHub's artifact service; a transient network error there (ETIMEDOUT on CreateArtifact) must not
+      # fail the smoke test (that would also skip the uninstall check and turn the release into a draft RC). One retry, then give up:
+      # the full logs are in the Diagnostics step above anyway.
       - uses: actions/upload-artifact@v7
+        id: upload-logs
         if: always()
+        continue-on-error: true
+        with:
+          name: smoke-test-logs
+          path: C:\smoke-artifacts
+          retention-days: 14
+
+      - name: Wait before retrying the log upload
+        if: always() && steps.upload-logs.outcome == 'failure'
+        run: Start-Sleep -Seconds 30
+
+      - uses: actions/upload-artifact@v7
+        if: always() && steps.upload-logs.outcome == 'failure'
+        continue-on-error: true
         with:
           name: smoke-test-logs
           path: C:\smoke-artifacts

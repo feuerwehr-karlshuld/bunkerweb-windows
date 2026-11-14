@@ -148,6 +148,9 @@ never replace each other).
   module required after it (real `ffi.C` -> ws2_32 -> ucrtbase, plus overrides); the scan-hazards `ffi.C symbol`/`ffi.load` entries
   list what upstream uses. Modules loaded *before* `init_by_lua` (resty.core) cannot be reached: that is why the shdict `free()` is a patch.
 - The submodule contains a few symlinks (mbedtls examples, brotli research); harmless on Windows.
+- **`actions/upload-artifact` (v4.4+) skips hidden files and directories (names starting with `.`) unless `include-hidden-files: true`.**
+  The build artifacts hand dotfiles from job to job (`certbot_dns_transip\.VERSION` was silently dropped between `python` and `package`, which
+  is why the plugin was missing in the first installers); every artifact that feeds a later job sets the option. `actions/cache` keeps them.
 - **`pip --target` drops `data_files`**: certbot-dns-transip reads `.VERSION` (a `setup.py` data file) and logged "plugin errored while loading" in
   every certbot run; `build-python.ps1` recreates `deps\python\certbot_dns_transip\.VERSION` from the dist-info and imports the plugin in the
   import check (unverified in CI). Other plugins that read data files next to their package would need the same.

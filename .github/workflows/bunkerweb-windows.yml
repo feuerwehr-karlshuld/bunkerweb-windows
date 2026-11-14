@@ -156,6 +156,7 @@ jobs:
           name: modsecurity
           path: build/modsecurity
           if-no-files-found: error
+          include-hidden-files: true
           retention-days: 7
 
   # ------------------------------------------------------------------------------------------ nginx & co (MSYS2 UCRT64)
@@ -237,6 +238,7 @@ jobs:
           name: native
           path: build/native
           if-no-files-found: error
+          include-hidden-files: true
           retention-days: 7
 
   # ------------------------------------------------------------------------------------------ Python runtime
@@ -293,6 +295,7 @@ jobs:
           name: python
           path: build/python
           if-no-files-found: error
+          include-hidden-files: true
           retention-days: 7
 
   # ------------------------------------------------------------------------------------------ installer
@@ -447,6 +450,7 @@ jobs:
           name: installer
           path: dist
           if-no-files-found: error
+          include-hidden-files: true
           compression-level: 0
 
       # the staged tree is handy to inspect a build without installing it (not available when the installer
@@ -456,6 +460,7 @@ jobs:
         with:
           name: stage
           path: build/stage
+          include-hidden-files: true
           retention-days: 5
 
   # ------------------------------------------------------------------------------------------ smoke test

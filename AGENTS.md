@@ -175,6 +175,18 @@ history below refer to `apply-windows-port.py` as it was before the robustness r
   `certbot_dns_transip` (missing `.VERSION`; `build-python.ps1` now recreates it, `stage.ps1` requires it, the smoke test runs
   `certbot plugins`). The default `variables.env` no longer contains `IS_LOADING=yes` (the nginx component's temporary config sets it
   itself); existing `variables.env` files are never rewritten, so installs from earlier builds keep the line until removed by hand.
+- **Field-report log analysis (same install, `tmp/bunkerweb-logs`, unverified fixes):**
+  (a) `IS_LOADING=yes` in `variables.env` kept `/healthz` at `loading`: 186 reloads / 456 workers in 90 min, ended when the line was removed (already fixed above).
+  (b) `Folder cache entry is outside the cache roots: \bunkerweb\var\tmp\bunkerweb\failover` (28x), which also failed `download-crs-plugins`,
+  MMDB and update-check cache restores: `cache_restore.checked_folder_target` compares against `Path.resolve()`d roots; on Windows `resolve()`
+  adds `C:`, and `_check_path` only maps the cache/config roots, not tmp. Patch 10 (`cache-restore-accept-the-installed-tmp-root-for-folder`);
+  the smoke test greps `scheduler.log` for the message.
+  (c) `CERTIFICATE_VERIFY_FAILED` in urllib (MMDB jobs; `requests`/certifi jobs were fine): cause **inferred** (Windows root store of the server
+  lacks the CA), `base_env()` in `bwsvc.py` now sets `SSL_CERT_FILE` to certifi's bundle (additive to the Windows store; `sitecustomize` keeps it for
+  children with an explicit `env=`); `stage.ps1` requires `certifi\cacert.pem`. If it still fails, the CA is not in certifi either (TLS inspection?).
+  (d) the temporary start config had no `WORKER_PROCESSES`, so the first start spawned one worker per CPU thread: `TMP_ENV_DEFAULTS` now sets 1.
+  Not port bugs (documented in README 12.3): Let's Encrypt HTTP-01 timeouts with no request in `access.log` (public port 80 not forwarded),
+  Spamhaus DNSBL refusing public resolvers.
 
 - **Tenth CI run (first with the refactor + ninth-run fixes):** failed in "bwctl status / test / reload": `bwctl reload` got `503 a reload is in
   progress (.../reloading exists)` from upstream's reload serialisation (one reload at a time; the new workers remove the marker from a

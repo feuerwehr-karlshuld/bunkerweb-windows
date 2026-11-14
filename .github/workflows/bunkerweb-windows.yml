@@ -729,6 +729,14 @@ jobs:
           } while ((Get-Date) -lt $deadline)
           if ($code -ne 200) { throw 'Site not served after a restart' }
 
+      - name: Scheduler jobs do not trip over the cache roots
+        run: |
+          $log = 'C:\bunkerweb\var\log\bunkerweb\scheduler.log'
+          if (-not (Test-Path $log)) { throw "$log does not exist" }
+          $hits = Select-String -Path $log -Pattern 'outside the cache roots', 'Error recovering cache directory'
+          if ($hits) { $hits | Select-Object -First 10 | ForEach-Object { Write-Host $_.Line }; throw 'the scheduler cannot restore a folder: cache entry (path check on Windows)' }
+          Write-Host 'no cache-root errors in scheduler.log'
+
       # Everything the services wrote, straight into the run log (one collapsible group per file, service wrapper/stdout/stderr
       # first), so a failure can be analysed without downloading the smoke-test-logs artifact.
       - name: Diagnostics (service and BunkerWeb logs)

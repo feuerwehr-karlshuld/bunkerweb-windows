@@ -118,6 +118,8 @@ TMP_ENV_DEFAULTS = {
     "HTTPS_PORT": "443",
     "HEALTHCHECK_PORT": "6000",
     "KEEP_CONFIG_ON_RESTART": "no",
+    # nginx for Windows runs one worker anyway; "auto" (upstream default) made the first start spawn one per CPU thread
+    "WORKER_PROCESSES": "1",
 }
 
 DEFAULT_UI_PORT = "7000"
@@ -237,6 +239,12 @@ def base_env(*extra_paths: Path) -> dict:
     env["PYTHONPATH"] = os.pathsep.join(paths)
     env.setdefault("PYTHONUTF8", "1")
     env.setdefault("PYTHONIOENCODING", "utf-8")
+    # urllib's default context only trusts the Windows certificate store, which on a server that does not auto-update its
+    # roots lacks e.g. the CA of db-ip.com (CERTIFICATE_VERIFY_FAILED in the MMDB jobs). SSL_CERT_FILE is honoured by
+    # set_default_verify_paths() on top of the Windows store, so the certifi bundle only adds trust.
+    cacert = DEPS / "certifi" / "cacert.pem"
+    if cacert.is_file():
+        env.setdefault("SSL_CERT_FILE", ROOT_DIR + "\\usr\\share\\bunkerweb\\deps\\python\\certifi\\cacert.pem")
     return env
 
 

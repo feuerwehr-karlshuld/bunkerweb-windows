@@ -1,0 +1,29 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: BunkerWeb Windows port <bunkerweb-windows@users.noreply.invalid>
+Date: Sat, 14 Nov 2026 21:40:57 +0100
+Subject: [PATCH] cache_restore: accept the installed tmp root for folder:
+ cache rows on Windows
+
+checked_folder_target compares the row's target against the *resolved* cache roots. _check_path maps the cache and config
+roots to their resolved form, but not the tmp root (where the scheduler keeps its failover backup). On Windows
+Path('/bunkerweb/var/tmp/bunkerweb').resolve() is C:\bunkerweb\var\tmp\bunkerweb while the row carries the drive-less
+\bunkerweb\var\tmp\bunkerweb, so every failover restore raised 'Folder cache entry is outside the cache roots' (and the
+CRS plugin update, the MMDB and update-check jobs behind it failed). The installed tmp root is accepted as well; on Linux it
+equals the resolved one unless it is a symlink, and '..' is still rejected by _check_path.
+
+Upstream: none, Windows specific (resolve() adds a drive letter to rooted paths)
+Check: no 'Folder cache entry is outside the cache roots' in the scheduler log of a Windows install
+
+diff --git a/common/utils/cache_restore.py b/common/utils/cache_restore.py
+index bec5a5a..52431ae 100644
+--- a/common/utils/cache_restore.py
++++ b/common/utils/cache_restore.py
+@@ -22,7 +22,7 @@ RESOLVED_TMP_ROOT = TMP_ROOT.resolve()
+ # Where a folder: cache row may publish. checked_cache_path keeps a regular entry inside its
+ # plugin directory, but a folder: row carries its own absolute target and a publication renames a
+ # whole directory into place, so the target is checked rather than trusted.
+-FOLDER_ROOTS = (RESOLVED_CACHE_ROOT, RESOLVED_CONFIG_ROOT, RESOLVED_TMP_ROOT)
++FOLDER_ROOTS = (RESOLVED_CACHE_ROOT, RESOLVED_CONFIG_ROOT, RESOLVED_TMP_ROOT, TMP_ROOT)
+ 
+ 
+ def write_atomic(target: Path, data: bytes) -> None:

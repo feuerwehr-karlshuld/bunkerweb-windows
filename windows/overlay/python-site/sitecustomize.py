@@ -135,6 +135,7 @@ if sys.platform == "win32":
         "OPENSSL_CONF",
         "MAGIC",
         "BW_BUSYBOX",
+        "SSL_CERT_FILE",
         # BunkerWeb logs emoji: without UTF-8 mode a child's stdout (a pipe/file) is cp1252 and every log line fails
         "PYTHONUTF8",
         "PYTHONIOENCODING",

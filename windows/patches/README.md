@@ -30,6 +30,7 @@ The whole chain is also checked, without Windows and in about a minute, by `bash
 | 7 | `templator-render-in-one-worker-thread-instead-of-forked` | `common/gen/Templator.py` | no `fork` on Windows | Windows specific | upstream's Templator works with `spawn` |
 | 8 | `sync-tree-retry-replacing-a-live-generated-file-on-windows` | `common/gen/sync_tree.py` | `os.replace` over a file another process holds open (no `FILE_SHARE_DELETE`) or that is read-only fails with `WinError 5` | Windows specific | `sync_tree()` copes with a busy target on Windows |
 | 9 | `templator-load-the-shipped-libssl-for-the-ssl-ecdh-curve` | `common/gen/Templator.py` | the `ssl_ecdh_curve` probe only looks for `libssl.so*`; the port ships `usr\sbin\libssl-3*.dll` (`build-native.sh`) | Windows specific | no `could not bind libssl` warning without it |
+| 10 | `cache-restore-accept-the-installed-tmp-root-for-folder` | `common/utils/cache_restore.py` | `Path("/bunkerweb/var/tmp/bunkerweb").resolve()` gains a drive letter, the failover row's target does not (and `_check_path` only maps the cache/config roots), so every failover restore raised "Folder cache entry is outside the cache roots" | Windows specific | no such line in `scheduler.log` without it |
 
 Every patch carries `Upstream:` and `Check:` lines in its commit message; `patchtool.py lint` (part of the port check)
 refuses a patch without them.

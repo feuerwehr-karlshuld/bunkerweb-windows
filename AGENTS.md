@@ -192,6 +192,12 @@ history below refer to `apply-windows-port.py` as it was before the robustness r
   Not port bugs (documented in README 12.3): Let's Encrypt HTTP-01 timeouts with no request in `access.log` (public port 80 not forwarded),
   Spamhaus DNSBL refusing public resolvers.
 
+- **Field report 2026-11-15 (unverified fix):** a service named `nas.<domain>` made every config test fail with `CreateFile() "C:/bunkerweb/etc/nginx<LF>as.<domain>/set-lua.conf"
+ failed (123)`. `Templator._get_server_config` builds `NGINX_PREFIX` with `os.path.join`, which on Windows yields `/bunkerweb/etc/nginx\nas...`, and nginx's
+  parser turns `\n`, `\t`, `\r` into control characters (so only server names starting with n/t/r broke; others got a harmless backslash). Fixed by a
+  one-line replacement in `apply-windows-port.py` (`Path(...).as_posix()`). Watch for other `os.path.join` results that end up in generated nginx config.
+  The `/api/session/properties` 404s in the same log are internet scanners, not a bug.
+
 - **Tenth CI run (first with the refactor + ninth-run fixes):** failed in "bwctl status / test / reload": `bwctl reload` got `503 a reload is in
   progress (.../reloading exists)` from upstream's reload serialisation (one reload at a time; the new workers remove the marker from a
   timer ~5 s after start, the API waits only 4 s). Cause **not proven**: most likely the scheduler's own reload shortly after start

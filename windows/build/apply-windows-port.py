@@ -132,6 +132,11 @@ rep(
     1,
 )
 
+# NGINX_PREFIX is os.path.join(target, server) + "/": on Windows that inserts a backslash ("/bunkerweb/etc/nginx\nas.example.com/").
+# nginx's config parser treats \n, \t and \r in a token as escapes, so a service whose name starts with n, t or r ("nas.example.com")
+# produced an include path containing a line break and the whole configuration failed to load (error 123). Forward slashes only.
+rep("common/gen/Templator.py", 'f"{join(self._target, server)}/"', 'f"{Path(self._target, server).as_posix()}/"', 1)
+
 # nginx resolves -e (the early error log) with its own code that only knows drive-letter paths: "/bunkerweb/..." would be
 # appended to the prefix. (error_log in nginx.conf is fine, nginx handles rooted paths there.)
 rep("bw/lua/bunkerweb/api.lua", "-t -e /var/log/bunkerweb/error.log", "-t -e C:/bunkerweb/var/log/bunkerweb/error.log", 1)

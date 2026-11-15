@@ -1,0 +1,22 @@
+# Dependabot only watches the GitHub Actions used by the workflows.
+#
+# Deliberately NOT configured:
+#   - gitsubmodule: `bunkerweb/` is the pinned upstream release. Moving it needs the patch series to be rebased
+#     (see "Upgrading BunkerWeb" in windows/README.md); the nightly port-check.yml opens an `upstream-update`
+#     issue when a new release is out.
+#   - pip: the Python requirements of the installer come from BunkerWeb's own hashed lock files at build time;
+#     this repository has no requirements files of its own.
+#   - docker: no Dockerfiles (containers are out of scope for this project).
+# The busybox-w32 and WinSW downloads are pinned by URL + SHA-256 in the workflow and are updated by hand.
+version: 2
+updates:
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: weekly
+    commit-message:
+      prefix: ci
+    groups:
+      github-actions:
+        patterns:
+          - "*"

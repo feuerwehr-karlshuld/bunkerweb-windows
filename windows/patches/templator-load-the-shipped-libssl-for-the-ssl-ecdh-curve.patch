@@ -14,10 +14,10 @@ Upstream: none, Windows specific
 Check: the generator logs no "could not bind libssl" warning without this patch (e.g. upstream probes a bundled libssl)
 
 diff --git a/common/gen/Templator.py b/common/gen/Templator.py
-index e3bd6b7..0b991f3 100644
+index 46d3835..e483ac6 100644
 --- a/common/gen/Templator.py
 +++ b/common/gen/Templator.py
-@@ -46,11 +46,17 @@ def _set1_groups_list_probe():
+@@ -49,11 +49,17 @@ def _set1_groups_list_probe():
          # find_library() returns None on musl/Alpine and slim images often lack the unversioned
          # libssl.so, so try the versioned sonames too.
          lib = None

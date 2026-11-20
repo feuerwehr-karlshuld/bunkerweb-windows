@@ -5,7 +5,7 @@
 #   * LuaJIT (lua51.dll)
 #   * nginx.exe with every module BunkerWeb loads dynamically on Linux linked in statically:
 #     ngx_devel_kit, lua-nginx-module, stream-lua-nginx-module, lua-upstream-nginx-module,
-#     headers-more, cookie-flag, brotli, ModSecurity-nginx (against the MSVC-built libModSecurity.dll)
+#     headers-more, cookie-flag, brotli, zstd, ModSecurity-nginx (against the MSVC-built libModSecurity.dll)
 #   * Lua C modules: cjson, gd
 #   * pure Lua libraries (lua-resty-*, lualogging, geoip, base64, ffi-zlib, ...)
 #   * runtime DLLs and tools (openssl.exe, sqlite3.exe, libmagic)
@@ -139,6 +139,10 @@ if [ -d "$D/brotli" ] && [ ! -d "$D/ngx_brotli/deps/brotli/c" ]; then
 	rm -rf "$D/ngx_brotli/deps/brotli"
 	mv "$D/brotli" "$D/ngx_brotli/deps/brotli"
 fi
+# Zstandard (USE_ZSTD, since BunkerWeb 1.6.18): the vendored library as a static archive, linked into nginx.exe by
+# zstd-nginx-module (ZSTD_INC/ZSTD_LIB, like upstream's src/deps/install.sh), so there is no libzstd DLL to ship.
+make -C "$D/zstd/lib" -j"$NPROC" CC=gcc "CFLAGS=-O2" libzstd.a
+test -f "$D/zstd/lib/libzstd.a"
 cd "$D/nginx"
 [ -f configure ] || cp auto/configure ./configure
 chmod +x configure
@@ -151,6 +155,8 @@ export LUAJIT_INC="$LUAJIT_SRC"
 export LUAJIT_LIB="$LUAJIT_SRC"
 export MODSECURITY_INC="$D/modsecurity/headers"
 export MODSECURITY_LIB="$MODSEC_LIB"
+export ZSTD_INC="$D/zstd/lib"
+export ZSTD_LIB="$D/zstd/lib"
 
 # Paths compiled into nginx.exe are rooted at C:/bunkerweb (the single installation root). BunkerWeb's
 # generated configuration uses "/bunkerweb/..." paths (rewritten at build time by apply-windows-port.py),
@@ -198,6 +204,7 @@ export MODSECURITY_LIB="$MODSEC_LIB"
 	--add-module="$D/headers-more-nginx-module" \
 	--add-module="$D/nginx_cookie_flag_module" \
 	--add-module="$D/ngx_brotli" \
+	--add-module="$D/zstd-nginx-module" \
 	--add-module="$D/modsecurity-nginx" \
 	|| { echo "--- objs/autoconf.err (tail) ---"; tail -n 80 objs/autoconf.err || true; exit 1; }
 endgroup
@@ -214,6 +221,20 @@ sed -i \
 	-e "s#-lssl -lcrypto#-Wl,--whole-archive $SSL_A $CRYPTO_A -Wl,--no-whole-archive -lbcrypt -lcrypt32 -luser32 -lgdi32 -ladvapi32 -lws2_32#" \
 	objs/Makefile
 grep -n 'whole-archive' objs/Makefile
+endgroup
+
+group "nginx: response filter order"
+# ModSecurity must see response bodies before they are compressed (BunkerWeb 1.6.18 fixed this on Linux by loading the
+# compression modules before ModSecurity). With static modules the order comes from the modules' own config scripts:
+# brotli and zstd insert themselves right after gzip, ModSecurity right before postpone. In ngx_modules[] a later filter
+# runs earlier, so the required order is gzip < brotli < zstd < modsecurity < postpone.
+filter_order="$(grep -oE '&ngx_http_(gzip|brotli|zstd|modsecurity|postpone)_filter_module|&ngx_http_modsecurity_module' objs/ngx_modules.c \
+	| sed -e 's/^&ngx_http_//' -e 's/_filter_module$//' -e 's/_module$//' | tr '\n' ' ')"
+echo "filter order: $filter_order"
+[ "$filter_order" = "gzip brotli zstd modsecurity postpone " ] || {
+	echo "unexpected response filter order (want: gzip brotli zstd modsecurity postpone), ModSecurity would inspect compressed bodies" >&2
+	exit 1
+}
 endgroup
 
 group "nginx: build"
@@ -293,7 +314,7 @@ if [ -n "$missing" ]; then
 	exit 1
 fi
 objdump -p nginx.exe > "$WORK/nginx-exports.txt"
-for symbol in OpenSSL_version_num SSL_CTX_new EVP_PKEY_new ngx_http_lua_ffi_get_resp_status; do
+for symbol in OpenSSL_version_num SSL_CTX_new EVP_PKEY_new ngx_http_lua_ffi_get_resp_status ngx_http_lua_ffi_ssl_get_client_hello_ext; do
 	grep -qE "[][[:space:]]${symbol}[[:space:]]*\$" "$WORK/nginx-exports.txt" || { echo "nginx.exe does not export $symbol (needed by ffi.C)" >&2; exit 1; }
 done
 echo "nginx.exe exports the OpenSSL and lua-resty-core FFI symbols"
@@ -313,6 +334,7 @@ echo "all MinGW DLL imports are shipped in sbin"
 {
 	echo "nginx=$NGINX_VERSION"
 	echo "luajit=$(cd "$D/luajit" && cat .relver 2>/dev/null || echo unknown)"
+	echo "zstd=$(sed -n 's/^#define ZSTD_VERSION_\(MAJOR\|MINOR\|RELEASE\) *\([0-9]*\).*/\2/p' "$D/zstd/lib/zstd.h" | paste -sd. -)"
 	echo "openssl=$("$OUT/bin/openssl.exe" version 2>/dev/null | tr -d '\r' || echo unknown)"
 	echo "msys2-ucrt64-gcc=$(gcc -dumpversion)"
 } > "$OUT/BUILDINFO"

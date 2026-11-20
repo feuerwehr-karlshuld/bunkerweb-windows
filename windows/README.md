@@ -32,18 +32,19 @@ All of it is written for Linux. The port keeps BunkerWeb's own code and Linux la
 | Linux | Windows port |
 |---|---|
 | `/usr/share/bunkerweb`, `/etc/bunkerweb`, `/var/lib/bunkerweb`, ... | Everything lives under one root, `C:\bunkerweb\`, keeping the Linux sub-layout: `C:\bunkerweb\usr\share\bunkerweb`, `C:\bunkerweb\etc\bunkerweb`, `C:\bunkerweb\var\lib\bunkerweb`, ... At build time BunkerWeb's own POSIX paths are rewritten to `/bunkerweb/usr/share/bunkerweb`, `/bunkerweb/etc/bunkerweb`, ... (see below). Windows resolves such drive-less rooted paths against the current drive, and every service runs with working directory `C:\bunkerweb` (on `C:`), so they land in `C:\bunkerweb\...`. Nothing is installed in `C:\usr`, `C:\etc` or `C:\var`. |
-| nginx + dynamic modules (OpenResty components) | `nginx.exe` built with MSYS2/GCC (UCRT). All modules are linked **statically**: lua, stream-lua, ndk, lua-upstream, headers-more, cookie-flag, brotli, ModSecurity-nginx. |
+| nginx + dynamic modules (OpenResty components) | `nginx.exe` built with MSYS2/GCC (UCRT). All modules are linked **statically**: lua, stream-lua, ndk, lua-upstream, headers-more, cookie-flag, brotli, zstd (against the vendored libzstd, static), ModSecurity-nginx. The response filter order (ModSecurity before brotli/zstd/gzip compress, as `load_module` order gives on Linux since 1.6.18) comes from the modules' own configure scripts; `build-native.sh` fails if it changes. |
 | OpenSSL as a shared library used through LuaJIT FFI | OpenSSL is linked into `nginx.exe` (whole archive) and exported, so `ffi.C` finds `SSL_*` / `EVP_*`, as `lua-resty-openssl` expects. |
 | libmodsecurity.so | `libModSecurity.dll` built with MSVC 2022 using ModSecurity's own `build/win32` (conan). nginx links it through the plain C API (`msc_*`). |
 | `ffi.load("libz.so")`, `package.cpath` `*.so` | `wincompat.lua` translates library names and paths. The Lua C modules are real DLLs that keep their `.so` names. |
-| `ffi.C.inet_pton/ntohl/setenv/environ/fopen/flock/...` (libc functions Windows' `ffi.C` does not see) | `winffi.lua`: `wincompat.lua` installs an `ffi` proxy as `package.loaded["ffi"]`, so every Lua library required afterwards resolves these through ws2_32, the UCRT or a small `flock`/`fopen` emulation. No call site is patched. |
+| `ffi.C.inet_pton/ntohl/setenv/environ/fopen/flock/open/write/...` (libc functions Windows' `ffi.C` does not see) | `winffi.lua`: `wincompat.lua` installs an `ffi` proxy as `package.loaded["ffi"]`, so every Lua library required afterwards resolves these through ws2_32, the UCRT (`open/write/close/getpid` -> `_open/...`, Linux `O_*` flags translated) or a small `flock`/`fopen` emulation. No call site is patched. |
+| `os.rename` over an existing file (Lua) | `wincompat.lua` uses `MoveFileEx(MOVEFILE_REPLACE_EXISTING)`, the semantics of rename(2) (CrowdSec's enforcement checkpoints rely on it since 1.6.18). |
 | `io.open(f, "w")` of binary data | `wincompat.lua` adds `b` to every writing mode (text mode would turn `0x0A` into `0x0D 0x0A` and corrupt uploaded archives). |
 | `/proc/uptime` (Lua) | served by `wincompat.lua`'s `io.open` from `GetTickCount64` (Python side: patch `sync-tree-...`). |
 | `io.popen` / `os.execute` of shell commands | `wincompat.lua` runs them through `busybox sh` (busybox-w32). |
 | `kill -HUP <nginx>` (reload), `resty.signal`, `ngx.process.get_master_pid` | nginx for Windows signals through named events `Global\ngx_<signal>_<pid>`. `wincompat.lua` replaces `resty.signal` and `get_master_pid` at runtime; `bwsvc.py` uses the events too. |
 | POSIX bits in Python (`fcntl`, `pwd`, `grp`, `os.getuid`, `os.kill(pid, 0)`, `SIGHUP`, ...) | `python-site/` shims, loaded through `sitecustomize`. |
 | `Path("/x").is_absolute()` (BunkerWeb's rooted paths without drive, False on Windows since Python 3.13) | `sitecustomize.py` restores the pre-3.13 `ntpath.isabs` (a leading slash counts as absolute); the certbot entry point undoes it. |
-| systemd units + `start.sh` / `bunkerweb-scheduler.sh` / `bunkerweb-ui.sh` / `bunkerweb-api.sh` | `share/windows/bwsvc.py`, a Python port of those scripts, started by [WinSW](https://github.com/winsw/winsw) services. |
+| systemd units + `start.sh` / `bunkerweb-scheduler.sh` / `bunkerweb-ui.sh` / `bunkerweb-api.sh` | `share/windows/bwsvc.py`, a Python port of those scripts, started by [WinSW](https://github.com/winsw/winsw) services. Mirrors their 1.6.18 behaviour: env-file keys that change program execution (`PATH`, `PYTHON*`, ... plus `COMSPEC`, `SYSTEMROOT`, ...) are ignored, a preserved configuration that fails to start falls back to the loading configuration once, and database migrations run on a private copy of `alembic.ini`. |
 | gunicorn | waitress (web UI) and uvicorn (API). |
 | `systemctl reload bunkerweb-scheduler` | `bwctl reload-scheduler`, which uses a named event (ACL: SYSTEM and Administrators) and is mapped to the scheduler's SIGHUP handler. |
 | Config generator's libssl probe for `ssl_ecdh_curve` (`find_library("ssl")`, `libssl.so.*`) | Loads the shipped `usr\sbin\libssl-3-x64.dll` (patch `templator-load-the-shipped-libssl-...`). |
@@ -56,10 +57,10 @@ The port is deliberately **layered**, from the most robust against upstream chan
 1. **Runtime shims** (`overlay/`): `wincompat.lua` + `winffi.lua` for Lua (ffi proxy, binary `io.open`, `resty.signal`,
    `get_master_pid`, `/proc/uptime`, busybox `popen`/`execute`) and `python-site/` for Python (POSIX modules,
    `subprocess`, `ntpath.isabs`). Nothing in BunkerWeb's sources is touched for these.
-2. **Patch series** (`patches/*.patch`, git format-patch files): the multi-line changes with context. Seven patches:
-   HTTP/3 off, the `HEALTHCHECK_PORT` setting, the uptime in `sync_tree.py`, nginx's `configure` on win32, the
-   ModSecurity-nginx `dd()` macro, `free()` in lua-resty-core's shdict, the Templator without `fork`. Every patch states
-   why it exists, its upstream status and how to tell it is obsolete.
+2. **Patch series** (`patches/*.patch`, git format-patch files): the multi-line changes with context. Ten patches,
+   listed in the [ledger](patches/README.md) (HTTP/3 off, the `HEALTHCHECK_PORT` setting, `sync_tree.py`, nginx's
+   `configure` on win32, the ModSecurity-nginx `dd()` macro, `free()` in lua-resty-core's shdict, the Templator without
+   `fork`, ...). Every patch states why it exists, its upstream status and how to tell it is obsolete.
 3. **One-line replacements** in [`build/apply-windows-port.py`](build/apply-windows-port.py) (anchored and counted): no
    `load_module` lines, the `select` event model, no `reuseport`, `os.uname()` in `nginx.conf`, the early error log
    path for `nginx -t`, `require "bunkerweb.wincompat"` in `init_by_lua`, the `PYTHONPATH` separator and the hook
@@ -190,8 +191,10 @@ checks that the firewall rule, the listeners and the proxied requests use exactl
 - `stage`: the staged tree, useful to inspect a build;
 - `smoke-test-logs`: BunkerWeb logs and the generated nginx configuration from the test install.
 
-**Releases:** push a tag `v<bunkerweb-version>-win<N>`, for example `v1.6.17-win1`. The tag must match
-`bunkerweb/src/VERSION`. The release is only published when the smoke test passes.
+**Releases:** created by the `release` job (main only) as `v<bunkerweb-version>-win<N>`, for example `v1.6.17-win1`.
+`<bunkerweb-version>` is `bunkerweb/src/VERSION` with `~` written as `-` (git tags cannot contain `~`): BunkerWeb
+`1.6.18~rc5` gives `v1.6.18-rc5-win1`. Builds of an upstream pre-release are published as GitHub *pre-releases* and are
+never marked latest. The release is only published when the smoke test passes.
 
 The first ModSecurity build compiles its conan dependencies (Poco, libcurl, libxml2, ...) and can take
 a long time. They are cached afterwards.
@@ -259,7 +262,14 @@ Things that usually need attention on upgrades, which no Linux-side check can se
 
 - new dependencies in `src/deps/deps.json` (nginx modules or Lua libraries in `build-native.sh`);
 - new Python requirements without Windows wheels;
-- changes of how nginx is started, reloaded or health-checked.
+- changes of how nginx is started, reloaded or health-checked;
+- changes of the Linux service scripts (`src/linux/scripts/*.sh`, `src/common/helpers/utils.sh`) that `bwsvc.py` ports;
+- a changed `load_module` order or new filter modules in `nginx.conf` (the static build gets its filter order from the module configs).
+
+The 1.6.17 -> 1.6.18-rc5 upgrade needed: zstd (library + nginx module) in `build-native.sh`, the CrowdSec checkpoint
+shims (`open/write/close/getpid`, `os.rename`), the new stream `reuseport` variable in `apply-windows-port.py`, the
+Templator patch rebased onto upstream's explicit `fork` context, the 1.6.18 changes of `start.sh`/`bunkerweb-scheduler.sh`
+in `bwsvc.py`, and release tags without `~`.
 
 ---
 

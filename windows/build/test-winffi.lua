@@ -48,6 +48,21 @@ local function fake_ffi()
 		fabs_like = function()
 			return "ucrt"
 		end,
+		_open = function(path, oflag, pmode)
+			state.open = { path = path, oflag = oflag, pmode = pmode }
+			return 7
+		end,
+		_write = function(fd, buf, count)
+			state.write = { fd = fd, buf = buf, count = count }
+			return count
+		end,
+		_close = function(fd)
+			state.closed = fd
+			return 0
+		end,
+		_getpid = function()
+			return 4242
+		end,
 	}
 	local real = {
 		C = real_c,
@@ -119,6 +134,27 @@ do -- libc emulation overrides the real functions
 	real.C.fopen = nil
 	local ffi = winffi.new(real, libc)
 	check("libc override", ffi.C.fopen("x", "r") == "emulated")
+end
+
+do -- POSIX fd calls go to the UCRT's _open/_write/_close/_getpid, with Linux open flags translated
+	local real, state = fake_ffi()
+	local ffi = winffi.new(real)
+	-- what CrowdSec's enforcement_state.lua passes: O_WRONLY | O_CREAT | O_EXCL | O_CLOEXEC, mode 0660
+	local fd = ffi.C.open("/x.tmp", 524481, 432)
+	check("open returns the UCRT fd", fd == 7, fd)
+	-- _O_WRONLY 0x1 | _O_CREAT 0x100 | _O_EXCL 0x400 | _O_NOINHERIT 0x80 | _O_BINARY 0x8000
+	check("open flags translated", state.open.oflag == 0x8581, string.format("0x%x", state.open.oflag))
+	check("open mode: _S_IREAD | _S_IWRITE", state.open.pmode == 0x180, state.open.pmode)
+	check("open path unchanged", state.open.path == "/x.tmp")
+	ffi.C.open("/y", 0x241, 292) -- O_WRONLY | O_CREAT | O_TRUNC, mode 0444
+	check("O_TRUNC kept", state.open.oflag == 0x8301, string.format("0x%x", state.open.oflag))
+	check("read-only mode", state.open.pmode == 0x100, state.open.pmode)
+	ffi.C.open("/z", 0x402) -- O_RDWR | O_APPEND, no mode
+	check("O_APPEND mapped", state.open.oflag == 0x800a, string.format("0x%x", state.open.oflag))
+	check("default mode", state.open.pmode == 0x180, state.open.pmode)
+	check("write", ffi.C.write(7, "data", 4) == 4 and state.write.fd == 7 and state.write.count == 4)
+	check("close", ffi.C.close(7) == 0 and state.closed == 7)
+	check("getpid", ffi.C.getpid() == 4242)
 end
 
 do -- unknown symbols fail like they always did

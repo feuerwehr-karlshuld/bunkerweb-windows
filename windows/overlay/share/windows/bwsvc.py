@@ -21,6 +21,7 @@ import re
 import signal
 import subprocess
 import sys
+import tempfile
 import threading
 import time
 import urllib.request
@@ -101,6 +102,7 @@ LOG_TYPES=file
 """
 
 TMP_ENV_DEFAULTS = {
+    "USE_IPV6": "no",
     "DNS_RESOLVERS": "9.9.9.9 149.112.112.112 8.8.8.8 8.8.4.4",
     "API_LISTEN_HTTP": "yes",
     "API_LISTEN_HTTPS": "no",
@@ -123,6 +125,25 @@ TMP_ENV_DEFAULTS = {
 }
 
 DEFAULT_UI_PORT = "7000"
+
+# Env file keys that change how programs are found, loaded or run: no BunkerWeb settings, and a PATH or PYTHONPATH in
+# variables.env would otherwise replace the services' own. Same list as is_execution_env_key in
+# src/common/helpers/utils.sh (BunkerWeb 1.6.18), plus the Windows counterparts. Compared upper-case, Windows
+# environment names are case-insensitive.
+EXECUTION_ENV_KEYS = frozenset(
+    {
+        "PATH", "HOME", "SHELL", "ENV", "IFS", "CDPATH", "SHELLOPTS", "PROMPT_COMMAND", "GLOBIGNORE", "GCONV_PATH",
+        "TMPDIR", "TMP", "TEMP", "LOCPATH", "NLSPATH", "TZDIR", "HOSTALIASES", "LOCALDOMAIN", "RES_OPTIONS",
+        "UID", "EUID", "PPID", "PWD", "OLDPWD", "USER", "LOGNAME",
+        "PATHEXT", "COMSPEC", "SYSTEMROOT", "SYSTEMDRIVE", "WINDIR", "USERPROFILE", "APPDATA", "LOCALAPPDATA", "PROGRAMDATA",
+    }
+)  # fmt: skip
+EXECUTION_ENV_PREFIXES = ("PYTHON", "LD_", "BASH", "GLIBC_", "MALLOC_", "OPENSSL_")
+
+
+def is_execution_env_key(key: str) -> bool:
+    upper = key.upper()
+    return upper in EXECUTION_ENV_KEYS or upper.startswith(EXECUTION_ENV_PREFIXES) or re.fullmatch(r"PS[0-9]", upper) is not None
 
 # ---------------------------------------------------------------------------------------- helpers
 
@@ -217,7 +238,11 @@ def write_if_missing(path: Path, content: str, component: str) -> None:
 
 
 def parse_env_file(path: Path, identifiers_only: bool = False) -> dict:
-    """KEY=VALUE lines like the Linux export_env_file helper; tolerant to CRLF and a UTF-8 BOM."""
+    """KEY=VALUE lines like the Linux export_env_file helper; tolerant to CRLF and a UTF-8 BOM.
+
+    identifiers_only (the values become environment variables): only shell identifiers, and never a key that changes
+    program execution (is_execution_env_key), like export_env_file since BunkerWeb 1.6.18.
+    """
     values = {}
     if not path.is_file():
         return values
@@ -227,8 +252,12 @@ def parse_env_file(path: Path, identifiers_only: bool = False) -> dict:
             continue
         key, value = line.split("=", 1)
         key = key.strip()
-        if identifiers_only and not re.fullmatch(r"[A-Za-z_][A-Za-z0-9_]*", key):
-            continue
+        if identifiers_only:
+            if not re.fullmatch(r"[A-Za-z_][A-Za-z0-9_]*", key):
+                continue
+            if is_execution_env_key(key):
+                log("env", f"Ignoring {key} from {path.as_posix()}: it changes how programs are executed and is not a BunkerWeb setting")
+                continue
         values[key] = value
     return values
 
@@ -411,12 +440,18 @@ def component_nginx() -> int:
     Path("/bunkerweb/var/tmp/bunkerweb_reloading").unlink(missing_ok=True)
 
     env = base_env()
-    if regenerate:
+
+    # Renders the loading configuration, which the scheduler replaces with its push (start.sh render_temp_config)
+    def render_temp_config() -> bool:
         needs_config.unlink(missing_ok=True)
         if run_python(c, [BW / "gen" / "main.py", "--variables", tmp_env.as_posix()], env, cwd=ROOT_DIR) != 0:
             log(c, f"Error while generating config from {tmp_env.as_posix()}")
-            return 1
+            return False
         sentinel.unlink(missing_ok=True)
+        return True
+
+    if regenerate and not render_temp_config():
+        return 1
 
     for name in ("client_temp", "proxy_temp", "fastcgi_temp", "uwsgi_temp", "scgi_temp"):
         target = TMP_DIR / name
@@ -430,31 +465,51 @@ def component_nginx() -> int:
                 except OSError:
                     pass
 
-    if run_python(c, [BW / "utils" / "modsecurity_audit.py", "/bunkerweb/etc/nginx/variables.env"], env, cwd=ROOT_DIR) != 0:
-        log(c, "Invalid ModSecurity audit storage, refusing to start nginx")
-        return 1
-
-    log(c, "Starting nginx ...")
-    proc = subprocess.Popen(
-        [NGINX_EXE, "-e", "C:/bunkerweb/var/log/bunkerweb/error.log"],
-        cwd=ROOT_DIR,
-        env=env,
-        stdin=subprocess.DEVNULL,
-        creationflags=subprocess.CREATE_NEW_PROCESS_GROUP,
-    )
-
-    for _ in range(30):
-        if STOP.is_set() or proc.poll() is not None:
-            break
-        state = healthz(values["HEALTHCHECK_PORT"])
-        if state in ("ok", "loading"):
-            log(c, f"nginx started (PID {proc.pid}, health: {state})")
-            break
-        log(c, "Waiting for nginx to start ...")
-        time.sleep(1)
-    else:
+    # Starts nginx once (start.sh start_nginx). Returns the process once it answers on the health endpoint (or a stop was
+    # requested), None when it exited during startup or did not answer in time (then it is stopped).
+    def start_nginx():
+        if run_python(c, [BW / "utils" / "modsecurity_audit.py", "/bunkerweb/etc/nginx/variables.env"], env, cwd=ROOT_DIR) != 0:
+            log(c, "Invalid ModSecurity audit storage, refusing to start nginx")
+            return None
+        log(c, "Starting nginx ...")
+        proc = subprocess.Popen(
+            [NGINX_EXE, "-e", "C:/bunkerweb/var/log/bunkerweb/error.log"],
+            cwd=ROOT_DIR,
+            env=env,
+            stdin=subprocess.DEVNULL,
+            creationflags=subprocess.CREATE_NEW_PROCESS_GROUP,
+        )
+        for _ in range(30):
+            if STOP.is_set():
+                return proc
+            code = proc.poll()
+            if code is not None:
+                log(c, f"nginx exited with code {code} during startup")
+                pid_file.unlink(missing_ok=True)
+                return None
+            state = healthz(values["HEALTHCHECK_PORT"])
+            if state in ("ok", "loading"):
+                log(c, f"nginx started (PID {proc.pid}, health: {state})")
+                return proc
+            log(c, "Waiting for nginx to start ...")
+            time.sleep(1)
         log(c, "nginx did not answer on the health endpoint within 30 seconds")
         stop_nginx(c, proc.pid, proc)
+        pid_file.unlink(missing_ok=True)
+        return None
+
+    proc = start_nginx()
+    if proc is None and not regenerate and not STOP.is_set():
+        # At most once (BunkerWeb 1.6.18): the loading configuration that follows is the one every other start runs
+        log(c, "The preserved configuration failed to start nginx, falling back to the loading configuration until the scheduler pushes the latest one ...")
+        if not render_temp_config():
+            return 1
+        # The preserved trees may be what failed (a missing certificate, a broken plugin), so every push must reinstall them
+        for marker in (TMP_DIR / "pushswap").glob("*.applied"):
+            marker.unlink(missing_ok=True)
+        proc = start_nginx()
+    if proc is None:
+        log(c, "Error while executing temp nginx")
         return 1
 
     while not STOP.is_set():
@@ -572,11 +627,6 @@ def migrate_database(c: str, env: dict) -> bool:
         return code == 0
 
     database = env["DATABASE_URI"].split(":", 1)[0].split("+", 1)[0]
-    ini = alembic_dir / "alembic.ini"
-    ini.write_text(
-        re.sub(r"(?m)^version_locations =.*$", f"version_locations = {database}_versions", ini.read_text(encoding="utf-8")),
-        encoding="utf-8",
-    )
     normalized = re.sub(r"[.\-~]", "_", current)
     revision = None
     for migration in (alembic_dir / f"{database}_versions").glob(f"*_upgrade_to_version_{normalized}.py"):
@@ -584,13 +634,22 @@ def migrate_database(c: str, env: dict) -> bool:
     if not revision:
         log(c, f"No migration file found for database version: {current}")
         return False
-    if subprocess.run([PYTHON, "-m", "alembic", "stamp", revision], env=env, cwd=alembic_dir).returncode != 0:
-        log(c, f"Failed to stamp database with revision: {revision}, migration aborted")
-        return True
-    log(c, "Running database migration ...")
-    if subprocess.run([PYTHON, "-m", "alembic", "upgrade", "head"], env=env, cwd=alembic_dir).returncode != 0:
-        log(c, "Database migration failed")
-        return False
+    # Like bunkerweb-scheduler.sh since 1.6.18: alembic reads a private copy of its configuration (ALEMBIC_CONFIG), the
+    # installed alembic.ini is never edited. Relative paths in it still resolve against the working directory.
+    with tempfile.TemporaryDirectory(prefix="bunkerweb-alembic-") as private_dir:
+        ini = Path(private_dir, "alembic.ini")
+        ini.write_text(
+            re.sub(r"(?m)^version_locations =.*$", f"version_locations = {database}_versions", (alembic_dir / "alembic.ini").read_text(encoding="utf-8")),
+            encoding="utf-8",
+        )
+        alembic_env = {**env, "ALEMBIC_CONFIG": str(ini)}
+        if subprocess.run([PYTHON, "-s", "-m", "alembic", "stamp", "--purge", revision], env=alembic_env, cwd=alembic_dir).returncode != 0:
+            log(c, f"Failed to stamp database with revision: {revision}, migration aborted")
+            return False
+        log(c, "Running database migration ...")
+        if subprocess.run([PYTHON, "-s", "-m", "alembic", "upgrade", "head"], env=alembic_env, cwd=alembic_dir).returncode != 0:
+            log(c, "Database migration failed")
+            return False
     log(c, "Database migration completed successfully")
     return True
 

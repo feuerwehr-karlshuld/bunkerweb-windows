@@ -15,7 +15,7 @@ HTTP backends on the same server and in the LAN, Let's Encrypt via **HTTP-01** (
 
 ## Hard rules
 
-1. **Never modify anything in `bunkerweb/`.** It is a pinned git submodule (upstream tag, currently v1.6.17).
+1. **Never modify anything in `bunkerweb/`.** It is a pinned git submodule (upstream tag, currently v1.6.18-rc5).
    All Windows changes are applied to a *copy* (`build/src`) at build time by `windows/build/apply-windows-port.py` or come from
    `windows/overlay/`. If upstream code must change, prefer (in this order) a runtime shim in `windows/overlay/`, a pattern in
    `pathrewrite.py`, a patch in `windows/patches/` (via `patchtool.py`, never hand-edited), and only then an anchored one-line
@@ -69,7 +69,8 @@ windows/service/*.xml       WinSW 2.x service definitions: bunkerweb-nginx, -sch
 
 `modsecurity` (MSVC/conan, slow, cached) -> `native` (MSYS2/GCC, needs the modsecurity artifact) and `python` (parallel) ->
 `package` (stage, Inno Setup, `SHA256SUMS.txt`) -> `smoke-test` (silent install, proxy a request, bwctl checks, UI on :7000,
-restart, uninstall) -> `release` (main only; smoke test green: release `v<bunkerweb-version>-win<N>`, e.g. `v1.6.17-win2`, marked latest;
+restart, uninstall) -> `release` (main only; smoke test green: release `v<bunkerweb-version>-win<N>`, e.g. `v1.6.17-win2`, marked latest
+(a version with a pre-release suffix, e.g. `v1.6.18-rc5-win1`, is published as a GitHub pre-release and never marked latest);
 smoke test red: **draft** `v<bunkerweb-version>-win<N>-RC` with installer and `smoke-test-logs.zip`. Every new revision is a new release,
 earlier ones are kept. Only a release/draft with the same tag and draft state (rerun of that revision, retry after a failed smoke
 test) is deleted, incl. its tag and assets, and recreated on the built commit; drafts and real releases never replace each other,
@@ -106,8 +107,10 @@ target commit is the current one (a rerun keeps its number).
   LF endings matter: the anchored replacements match exact text including newlines.
 - Downloads are pinned and SHA-256 verified (busybox-w32, WinSW 2.12.0 `WinSW.NET461.exe`). Change URL and hash together.
 - `PYTHON_VERSION` is `3.14` (what BunkerWeb's Linux packages use). If a dependency has no cp314 wheel, switch to `3.13`.
-- Release/tag format: `v<VERSION>-win<N>` (release) and `v<VERSION>-win<N>-RC` (draft); `<VERSION>` is `bunkerweb/src/VERSION` of the submodule,
-  `<N>` the port revision, also in the installer file name (`-win<N>`). Revisions accumulate, they are not overwritten.
+- Release/tag format: `v<VERSION>-win<N>` (release) and `v<VERSION>-win<N>-RC` (draft); `<VERSION>` is `bunkerweb/src/VERSION` of the submodule
+  with `~` replaced by `-` (`1.6.18~rc5` -> `1.6.18-rc5`; git refs cannot contain `~`, and Inno Setup's `VersionInfoVersion` gets only
+  the numeric part, `AppNumericVersion`), `<N>` the port revision, also in the installer file name (`-win<N>`). Revisions accumulate,
+  they are not overwritten.
 - Artifacts: `modsecurity`, `native`, `python`, `stage`, `installer`, `smoke-test-logs` (first place to look after a failure).
 
 ## How to work on a change
@@ -127,9 +130,9 @@ target commit is the current one (a rerun keeps its number).
   add a check to the smoke test if it is cheap. When you cannot test, document the risk.
 - Keep `README.md` consistent with reality: ports, paths, service names, `bwctl` commands, defaults. The operator guide is
   part of the deliverable.
-- Settings defaults quoted in the guide were checked against the 1.6.17 sources (`LETS_ENCRYPT_CHALLENGE=http`,
+- Settings defaults quoted in the guide were checked against the 1.6.18-rc5 sources (`LETS_ENCRYPT_CHALLENGE=http`,
   `AUTO_REDIRECT_HTTP_TO_HTTPS=yes`, `DISABLE_DEFAULT_SERVER=no`, `USE_BACKUP=yes`, `USE_MODSECURITY_GLOBAL_CRS=no`,
-  `USE_BUNKERNET`/`USE_DNSBL=yes`). Re-verify after upgrades.
+  `USE_BUNKERNET`/`USE_DNSBL=yes`, `USE_ZSTD=no`). Re-verify after upgrades.
 
 ## Gotchas learned so far
 
@@ -164,16 +167,56 @@ target commit is the current one (a rerun keeps its number).
   (`Path.is_absolute()`/`os.path.isabs()` are False). `sitecustomize.py` restores the pre-3.13 `ntpath.isabs` (unit-tested on Linux against
   `PureWindowsPath`); the certbot entry point undoes it. No upstream validator is patched any more.
 - **No `fork` on Windows:** the config generator (`Templator.render`) forced the fork start method and used a
-  `ProcessPoolExecutor`; a patch renders in one worker thread instead. Any other `multiprocessing` use needs the same care.
+  `ProcessPoolExecutor` (since 1.6.18 with an explicit `mp.get_context("fork")`); a patch renders in one worker thread instead.
+  Any other `multiprocessing` use needs the same care.
+- **Static nginx modules ignore `load_module` order.** Upstream fixes filter order (e.g. ModSecurity before Brotli in 1.6.18) by
+  reordering `load_module` in `nginx.conf`, which the port deletes; the static order comes from each module's `config` script.
+  `build-native.sh` asserts `gzip < brotli < zstd < modsecurity < postpone` in `objs/ngx_modules.c` (checked on Linux with a
+  real `configure` run: that order already held for 1.6.17).
+- **`os.rename` in Lua does not replace on Windows** (the CRT's `rename()` refuses an existing target): `wincompat.lua` maps it to
+  `MoveFileEx(MOVEFILE_REPLACE_EXISTING)`. `ffi.C.open` with Linux `O_*` values would be wrong, not just missing (Linux
+  `O_CREAT` 0x40 is `_O_TEMPORARY` in the UCRT): `winffi.lua` translates them.
 - Child Python processes spawned by BunkerWeb with an explicit `env=` lose `PYTHONUTF8`/`PYTHONIOENCODING` unless
   `sitecustomize.py` re-adds them (`_KEEP_ENV`); without them emoji log lines fail with cp1252 `UnicodeEncodeError`.
 - The smoke-test job's `Diagnostics` step prints all service/BunkerWeb logs into the run log (grouped per file).
 
 ## Current state
 
-*Last updated 2026-11-13 (ninth run analysed). Update this section whenever the pipeline state changes. Step numbers (3c, 7b, 12b, 12c, 12d, 13, ...) in the
+*Last updated 2026-11-20 (upgrade to 1.6.18-rc5). Update this section whenever the pipeline state changes. Step numbers (3c, 7b, 12b, 12c, 12d, 13, ...) in the
 history below refer to `apply-windows-port.py` as it was before the robustness refactor (the multi-line ones are now patches, see the ledger in
 `windows/patches/README.md`).*
+
+- **Upgrade v1.6.17 -> v1.6.18-rc5 (2026-11-20, Linux port check green, nothing of it has run in CI):**
+  - Patch series: `patchtool.py import --rev v1.6.18-rc5`; only the Templator patch conflicted (upstream now renders the
+    global templates first and passes `mp.get_context("fork")` explicitly), resolved keeping the single worker thread, `Check:`
+    line updated. The other nine rebased cleanly.
+  - `apply-windows-port.py`: stream listeners now take `reuseport` from a Jinja variable (`reuseport_directive`, set for the first
+    service on a shared port); the blunt `" reuseport"` removal cut the variable name (`TemplateSyntaxError`), so the stream template
+    now blanks the variable's value. `check-port.py`'s reuseport invariant ignores Jinja identifiers.
+  - New upstream deps: `zstd` + `zstd-nginx-module` (`USE_ZSTD`, off by default): `build-native.sh` builds `libzstd.a` from the
+    vendored source (MinGW, asm included) and links the module statically (`ZSTD_INC`/`ZSTD_LIB`, like upstream's `install.sh`);
+    unverified on MinGW. The vendored `yajl` is only for RHEL 10; ModSecurity on Windows already gets yajl from conan, so
+    `MODSECURITY_SEC_AUDIT_LOG_FORMAT=JSON` should work (conan's yajl 2.1.0 lacks the Debian CVE patches upstream applies).
+  - New Lua hazard: CrowdSec `enforcement_state.lua` writes checkpoints with `ffi.C.open/write/close/getpid` (Linux flag
+    `524481`) and `os.rename` over the previous file. Shimmed in `winffi.lua` (UCRT `_open/...`, flags translated, unit-tested)
+    and `wincompat.lua` (`os.rename` -> `MoveFileExA` with replace; untested). Only matters when the CrowdSec plugin is used.
+  - `bwsvc.py` mirrors the 1.6.18 Linux scripts: `USE_IPV6` in the temporary config, env-file keys that change execution are
+    ignored (`is_execution_env_key` + Windows names), a preserved config (`KEEP_CONFIG_ON_RESTART=yes`) that fails to start falls
+    back once to the loading config and drops `pushswap/*.applied`, alembic runs on a private `alembic.ini` copy (`ALEMBIC_CONFIG`,
+    `-s`, `stamp --purge`, abort when stamping fails; the installed `alembic.ini` was edited in place before).
+  - Python: new `certbot-dns-hosttech` and `lazy-importer` (pure `py3-none-any` wheels, no data files); smoke test now requires
+    `dns-hosttech` in `certbot plugins` and enables `USE_ZSTD` for its test site.
+  - `src/VERSION` is `1.6.18~rc5`: the `Version` step writes `~` as `-` (tag `v1.6.18-rc5-win<N>`), passes the numeric
+    `AppNumericVersion` to ISCC, and such versions are released as GitHub pre-releases (not latest). `port-check.yml`'s
+    upstream-watch normalises `~` too and checks the pinned version when the latest regular release is older (no false issue
+    against 1.6.17). `CACHE_VERSION` bumped to 2 (ISCC invocation changed).
+  - Reviewed and judged harmless on Windows: `bwcli support`'s `systemctl` probe (returns "" on `OSError`), `api.lua`'s new reload
+    rejection probe via `/proc` (guarded by `ffi.os ~= "Linux"`), `ssl_client_hello_by_lua_block` (MSYS2 OpenSSL 3 has the
+    callback), the `#bw-env-format:2` encoding (only generated files carry it; `bwsvc.py`/`bwctl.py` read the operator's file),
+    `Templator._write_config`'s `tmp.replace()` (failure is logged and the generation retried).
+  - Watch in the next CI run: zstd/asm build under MinGW, the filter-order assertion, `ngx_http_lua_ffi_ssl_get_client_hello_ext`
+    export, the reload path (reworked upstream: `wait_reload` confirms through `misc_ready_<token>` in the internal store), the
+    scheduler's parallel job runner, and the first migration from a 1.6.17 database (none in CI: fresh install).
 
 - **Field report 2026-11-14 (first real install, unverified fixes):** Let's Encrypt never issued because certbot aborted while loading
   `certbot_dns_transip` (missing `.VERSION`; `build-python.ps1` now recreates it, `stage.ps1` requires it, the smoke test runs
@@ -328,7 +371,7 @@ history below refer to `apply-windows-port.py` as it was before the robustness r
   (OpenSSL whole-archive, libModSecurity import lib, module linking), Python 3.14 wheel availability, `stage.ps1`
   required-files check, installer script, runtime behaviour of the shims and `bwsvc.py` in the smoke test (reload via named
   events, certbot invocation, WinSW service dependencies).
-- After a green run (the release `v1.6.17-win1` appears by itself): trial on a non-critical server including a Let's Encrypt *staging* issuance.
+- After a green run (the pre-release `v1.6.18-rc5-win1` appears by itself): trial on a non-critical server including a Let's Encrypt *staging* issuance.
 - Operator guide and installer have never run on a real server. Do not describe anything as "tested" beyond what the smoke test
   in a green CI run covers.
 

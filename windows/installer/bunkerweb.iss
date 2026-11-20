@@ -1,7 +1,8 @@
 ; BunkerWeb for Windows - Inno Setup 6 script
 ;
 ; Build (see .github/workflows/bunkerweb-windows.yml):
-;   ISCC.exe /DAppVersion=1.6.17 /DPortRevision=1 /DStageDir=<stage> /DLicenseFile=<bunkerweb\LICENSE.md> /DOutputDir=<dist> bunkerweb.iss
+;   ISCC.exe /DAppVersion=1.6.18-rc5 /DAppNumericVersion=1.6.18 /DPortRevision=1 /DStageDir=<stage> /DLicenseFile=<bunkerweb\LICENSE.md> /DOutputDir=<dist> bunkerweb.iss
+;   (AppVersion uses "-" where bunkerweb/src/VERSION has "~"; AppNumericVersion is its numeric part, for VersionInfoVersion)
 ;
 ; The installation layout is fixed and entirely below C:\bunkerweb. BunkerWeb uses absolute POSIX paths (/etc/bunkerweb,
 ; /var/lib/bunkerweb, ...); the build rewrites them to /bunkerweb/etc/bunkerweb ..., which Windows resolves on the C: drive.
@@ -13,6 +14,9 @@
 
 #ifndef AppVersion
   #define AppVersion "0.0.0"
+#endif
+#ifndef AppNumericVersion
+  #define AppNumericVersion AppVersion
 #endif
 #ifndef PortRevision
   #define PortRevision "0"
@@ -40,7 +44,7 @@ AppPublisher=Unofficial Windows port of BunkerWeb (Bunkerity)
 AppPublisherURL=https://github.com/feuerwehr-karlshuld/bunkerweb-windows
 AppSupportURL=https://github.com/feuerwehr-karlshuld/bunkerweb-windows
 AppComments=BunkerWeb is developed by Bunkerity (https://github.com/bunkerity/bunkerweb) and licensed under the AGPLv3.
-VersionInfoVersion={#AppVersion}.{#PortRevision}
+VersionInfoVersion={#AppNumericVersion}.{#PortRevision}
 DefaultDirName={#BW}
 DisableDirPage=yes
 UsePreviousAppDir=no

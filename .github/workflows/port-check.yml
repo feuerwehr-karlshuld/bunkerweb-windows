@@ -82,11 +82,20 @@ jobs:
         env:
           REQUESTED: ${{ inputs.upstream_ref }}
         run: |
-          pinned="v$(tr -d '[:space:]' < bunkerweb/src/VERSION)"
+          # src/VERSION spells pre-releases Debian-style (1.6.18~rc5), the git tags with "-" (v1.6.18-rc5)
+          pinned_version="$(tr -d '[:space:]' < bunkerweb/src/VERSION)"
+          pinned="v${pinned_version//\~/-}"
           if [ -n "$REQUESTED" ]; then
             tag="$REQUESTED"
           else
             tag="$(gh api repos/bunkerity/bunkerweb/releases/latest --jq .tag_name)"
+            # The latest regular release can be older than a pinned release candidate: check the pinned one then,
+            # instead of reporting that the port does not apply to a version it has already moved past.
+            latest_version="${tag#v}"
+            if dpkg --compare-versions "${latest_version/-/\~}" lt "$pinned_version"; then
+              echo "Latest release $tag is older than the pinned $pinned, checking the pinned version"
+              tag="$pinned"
+            fi
           fi
           echo "pinned=$pinned" >> "$GITHUB_OUTPUT"
           echo "tag=$tag" >> "$GITHUB_OUTPUT"

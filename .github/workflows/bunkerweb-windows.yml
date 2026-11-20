@@ -69,7 +69,7 @@ defaults:
 
 env:
   # Part of every build-cache key: bump it to invalidate all caches
-  CACHE_VERSION: "1"
+  CACHE_VERSION: "2"
   # BunkerWeb's Linux packages use Python 3.14; change here if a dependency has no wheel for it yet
   PYTHON_VERSION: "3.14"
   BUSYBOX_URL: https://frippery.org/files/busybox/busybox-w64-FRP-6354-g5f09fb446.exe
@@ -330,7 +330,13 @@ jobs:
           INPUT_REVISION: ${{ inputs.port_revision }}
           GH_TOKEN: ${{ github.token }}
         run: |
-          $version = (Get-Content bunkerweb/src/VERSION -Raw).Trim()
+          # Pre-releases carry a Debian-style "~" in src/VERSION (1.6.18~rc5), which a git tag cannot contain: the port uses
+          # upstream's own tag spelling (1.6.18-rc5) for tags, release names and the installer file name. Inno Setup's
+          # VersionInfoVersion only takes numbers, so it gets the numeric part (1.6.18) separately.
+          $raw = (Get-Content bunkerweb/src/VERSION -Raw).Trim()
+          $version = $raw.Replace('~', '-')
+          if ($version -notmatch '^(\d+\.\d+\.\d+)(-[0-9A-Za-z.]+)?$') { throw "Unexpected bunkerweb/src/VERSION: '$raw'" }
+          $numericVersion = $Matches[1]
           if ($env:INPUT_REVISION) {
             if ($env:INPUT_REVISION -notmatch '^\d+$') { throw "port_revision must be a number" }
             $revision = $env:INPUT_REVISION
@@ -358,8 +364,9 @@ jobs:
             $revision = if ($same -gt 0) { "$same" } else { "$($max + 1)" }
           }
           "version=$version" >> $env:GITHUB_OUTPUT
+          "numeric_version=$numericVersion" >> $env:GITHUB_OUTPUT
           "revision=$revision" >> $env:GITHUB_OUTPUT
-          Write-Host "BunkerWeb $version, Windows port revision $revision"
+          Write-Host "BunkerWeb $version (src/VERSION $raw), Windows port revision $revision"
           $sha = (git rev-parse HEAD:bunkerweb).Trim()
           "bunkerweb=$sha" >> $env:GITHUB_OUTPUT
           Write-Host "bunkerweb submodule commit: $sha"
@@ -450,6 +457,7 @@ jobs:
           $root = (Get-Location).Path
           & $iscc `
             "/DAppVersion=${{ steps.version.outputs.version }}" `
+            "/DAppNumericVersion=${{ steps.version.outputs.numeric_version }}" `
             "/DPortRevision=${{ steps.version.outputs.revision }}" `
             "/DStageDir=$root\build\stage" `
             "/DLicenseFile=$root\bunkerweb\LICENSE.md" `
@@ -560,6 +568,8 @@ jobs:
             "${env:SITE}_USE_REVERSE_PROXY=yes"
             "${env:SITE}_REVERSE_PROXY_URL=/"
             "${env:SITE}_REVERSE_PROXY_HOST=http://127.0.0.1:$env:BACKEND_PORT"
+            # zstd-nginx-module is linked statically since 1.6.18: its directives must be accepted by nginx
+            "${env:SITE}_USE_ZSTD=yes"
           ) | Set-Content -Encoding ascii C:\bunkerweb\etc\bunkerweb\variables.env
           Get-Content C:\bunkerweb\etc\bunkerweb\variables.env
 
@@ -605,6 +615,7 @@ jobs:
           $out = & 'C:\bunkerweb\usr\share\bunkerweb\python\python.exe' 'C:\bunkerweb\usr\share\bunkerweb\deps\python\bin\certbot' plugins --config-dir "$d\etc" --work-dir "$d\work" --logs-dir "$d\log" 2>&1 | Out-String
           Write-Host $out
           if ($LASTEXITCODE -ne 0 -or $out -match 'errored while loading') { throw 'certbot could not load all of its plugins' }
+          if ($out -notmatch 'dns-hosttech') { throw 'certbot does not list the dns-hosttech plugin (new in BunkerWeb 1.6.18)' }
 
       - name: Busybox applets used by BunkerWeb are available
         run: |
@@ -893,6 +904,11 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
+          # a build of an upstream pre-release (1.6.18-rc5) is published as a GitHub pre-release and never becomes "latest"
+          case "$VERSION" in
+            *-*) echo "prerelease=true" >> "$GITHUB_OUTPUT" ;;
+            *) echo "prerelease=false" >> "$GITHUB_OUTPUT" ;;
+          esac
           if [ "$SMOKE_RESULT" = success ]; then
             echo "tag=v${VERSION}-win${REVISION}" >> "$GITHUB_OUTPUT"
             echo "name=BunkerWeb ${VERSION} for Windows (revision ${REVISION})" >> "$GITHUB_OUTPUT"
@@ -946,11 +962,16 @@ jobs:
         shell: bash
         env:
           DRAFT: ${{ steps.names.outputs.draft }}
+          PRERELEASE: ${{ steps.names.outputs.prerelease }}
           RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
         run: |
           {
             if [ "$DRAFT" = true ]; then
               echo "**RELEASE CANDIDATE - the smoke test FAILED. Do not use this on a production server.** Logs: [workflow run]($RUN_URL), \`smoke-test-logs.zip\`."
+              echo
+            fi
+            if [ "$PRERELEASE" = true ]; then
+              echo "**Pre-release:** built from the BunkerWeb pre-release ${VERSION}. Use the latest regular release on production servers."
               echo
             fi
             echo "**BunkerWeb ${VERSION} for Windows** (port revision ${REVISION}) - native Windows services, no containers."
@@ -968,8 +989,8 @@ jobs:
           name: ${{ steps.names.outputs.name }}
           target_commitish: ${{ github.sha }}
           draft: ${{ steps.names.outputs.draft == 'true' }}
-          prerelease: false
-          make_latest: ${{ steps.names.outputs.draft != 'true' }}
+          prerelease: ${{ steps.names.outputs.prerelease == 'true' }}
+          make_latest: ${{ steps.names.outputs.draft != 'true' && steps.names.outputs.prerelease != 'true' }}
           body_path: release-notes.md
           files: |
             dist/*.exe

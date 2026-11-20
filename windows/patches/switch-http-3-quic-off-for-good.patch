@@ -12,7 +12,7 @@ Upstream: none, Windows specific (nginx has no HTTP/3 on Windows)
 Check: `nginx -V` of the Windows build lists --with-http_v3_module, or the smoke test passes with the HTTP3 blocks enabled
 
 diff --git a/common/confs/default-server-http.conf b/common/confs/default-server-http.conf
-index 27381aa..f368c7b 100644
+index 7f311ab..a20bc26 100644
 --- a/common/confs/default-server-http.conf
 +++ b/common/confs/default-server-http.conf
 @@ -74,7 +74,7 @@ server {
@@ -22,7 +22,7 @@ index 27381aa..f368c7b 100644
 -	{% if "TLSv1.3" in SSL_PROTOCOLS and HTTP3 == "yes" and USE_PROXY_PROTOCOL == "no" %}
 +	{% if "TLSv1.3" in SSL_PROTOCOLS and false and USE_PROXY_PROTOCOL == "no" %}
  	http3 on;
- 		{% for k, port in all.items() if k.startswith("HTTPS_PORT") %}
+ 		{% for k, port in all.items() if k.startswith("HTTPS_PORT") and port %}
  	listen 0.0.0.0:{{ port }} quic reuseport default_server;
 diff --git a/common/confs/server-http/ssl-certificate-lua.conf b/common/confs/server-http/ssl-certificate-lua.conf
 index aa8e794..764b1d5 100644
@@ -65,7 +65,7 @@ index ff023cf..2cc8138 100644
  
  limit_conn_zone $v1ip zone=v1ips:10m;
 diff --git a/common/core/misc/plugin.json b/common/core/misc/plugin.json
-index 10c1fe6..23688b2 100644
+index 2b42a61..0b808ff 100644
 --- a/common/core/misc/plugin.json
 +++ b/common/core/misc/plugin.json
 @@ -80,8 +80,8 @@

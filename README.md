@@ -7,7 +7,7 @@ sources, and this README is the operator guide for installing and running it.
 | Item | Version used in this guide |
 |---|---|
 | Host OS | Windows Server 2019 / 2022 / 2025, x64, Desktop Experience or Core |
-| BunkerWeb | 1.6.17, built natively for Windows by this repository (`windows/`, GitHub Actions) |
+| BunkerWeb | 1.6.18-rc5 (an upstream release candidate), built natively for Windows by this repository (`windows/`, GitHub Actions) |
 | Runtime | nginx with OpenResty modules, LuaJIT, ModSecurity v3 + OWASP CRS, CPython 3.14, all bundled |
 | Services | Four Windows services (WinSW), no containers, no VMs, no WSL |
 | Certificates | Let's Encrypt, **HTTP-01** challenge (DNS records are maintained by hand) |
@@ -79,7 +79,7 @@ older nginx + win-acme setup that this replaces (section 4).
 Milestones, in order:
 
 1. **Green CI pipeline**: every job (modsecurity, native, python, package, smoke-test) passes on `windows-2022`.
-2. **First release** `v1.6.17-win1`, published automatically once the smoke test passes (a failing smoke test only produces the draft `v1.6.17-win1-RC`).
+2. **First release** `v<version>-win1`, published automatically once the smoke test passes (a failing smoke test only produces the draft `v<version>-win1-RC`). With the submodule on the release candidate 1.6.18-rc5 that is `v1.6.18-rc5-win1`, published as a GitHub *pre-release*.
 3. **Trial on a non-critical server**: install, Let's Encrypt *staging* end to end, a few real backends, reboot and upgrade tests.
 4. **Production cutover** following [section 4](#4-migrating-from-the-existing-nginx--win-acme-setup), with rollback ready.
 5. **Routine upgrades** to new BunkerWeb releases ([section 11.5](#115-upgrading-bunkerweb)).
@@ -223,6 +223,9 @@ The installer is produced by the GitHub Actions workflow
   A release is only created when the automated smoke test (install → proxy request →
   reload → restart → uninstall) has passed; a failed smoke test only yields a *draft* `-RC` release (visible to maintainers
   only), which must not be used. *(No release exists until the pipeline is green, see [project status](#project-status).)*
+- **Pre-releases**: builds of an upstream release candidate are tagged with its version as upstream spells its tag
+  (`v1.6.18-rc5-win1`, installer `bunkerweb-1.6.18-rc5-win1-x64-setup.exe`), are marked *Pre-release* and never become the
+  *latest* release. Use them for testing only.
 - **CI builds**: *Actions* → *BunkerWeb for Windows* → a successful run → artifact `installer`. To build on demand, use
   *Run workflow* (`workflow_dispatch`).
 
@@ -1101,8 +1104,8 @@ Back up three layers:
 
 ### 11.5 Upgrading BunkerWeb
 
-New BunkerWeb releases need a new build of this port: move the `bunkerweb` submodule to the new tag, let CI build and test it,
-and tag `v<version>-win<N>` (see [`windows/README.md`](windows/README.md)). Then, on the server:
+New BunkerWeb releases need a new build of this port: move the `bunkerweb` submodule to the new tag and let CI build and test it;
+the `release` job publishes `v<version>-win<N>` (see [`windows/README.md`](windows/README.md)). Then, on the server:
 
 1. Read the upstream release notes and https://docs.bunkerweb.io/latest/upgrading/.
 2. Back up:
@@ -1123,6 +1126,19 @@ and tag `v<version>-win<N>` (see [`windows/README.md`](windows/README.md)). Then
 
 **Rollback:** run the previous installer and restore `C:\bunkerweb\var\lib\bunkerweb\db.sqlite3` from step 2. Database migrations
 are one-way.
+
+**Notes for 1.6.17 → 1.6.18** (from the upstream changelog, the ones that matter for this setup):
+
+- BunkerWeb's own ModSecurity rules moved to the IDs 9,800,000-9,809,999. Exclusions in `configs\modsec\...` that name an
+  old BunkerWeb rule ID must be updated (the upstream ModSecurity docs have the map). CRS rule IDs did not change.
+- `variables.env`, `scheduler.env`, `ui.env` and `api.env` can no longer set variables that change how programs run
+  (`PATH`, `PYTHON*`, `TEMP`/`TMP`, `COMSPEC`, `SYSTEMROOT`, ...): the services ignore them and log
+  `Ignoring <KEY> from ...`.
+- Setting values are validated more strictly (lists glued without a separator, whitespace-only values), and
+  `INJECT_HEAD`/`INJECT_BODY` no longer need hand-added `\'` escapes. Run the apply script's `-CheckOnly` and read the
+  scheduler log after the upgrade.
+- New: Zstandard compression per service (`USE_ZSTD=yes`, off by default), `DNSBL_LIST` per service,
+  `*_URLS_REFRESH_INTERVAL` for black/grey/whitelist URLs, `CLIENT_HEADER_TIMEOUT`/`CLIENT_BODY_TIMEOUT` per service.
 
 ### 11.6 Uninstalling
 
@@ -1196,6 +1212,7 @@ away from 80/443 works the same way, but remember the router forward and `bwctl 
 | Access via IP or an unknown name is dropped | `DISABLE_DEFAULT_SERVER=yes` | Intended; use the hostnames |
 | Works from outside, not from the LAN | No hairpin NAT | Split DNS → 192.168.1.50 |
 | Values look odd / settings ignored | Quotes, spaces or BOM in `variables.env` | Run the apply script; it rejects and normalises such lines |
+| Service log: `Ignoring PATH from .../variables.env: it changes how programs are executed` (or `PYTHONPATH`, `TEMP`, ...) | Since 1.6.18 the env files cannot change the services' own execution environment | Remove the line; it was never a BunkerWeb setting |
 | Setting locked in the UI | Service owned by `variables.env` | Edit it in git (6.1) |
 | Locked out of the UI | Password unknown or TOTP keys lost | Set `ADMIN_PASSWORD` + `OVERRIDE_ADMIN_CREDS=yes` in `ui.env`, restart the UI, then remove the override; restore `.totp_encryption_keys.json` |
 | High CPU in `MsMpEng.exe` under load | Defender scanning temp files of nginx | Optionally exclude `C:\bunkerweb\var\tmp\bunkerweb` and `C:\bunkerweb\var\cache\bunkerweb` (`Add-MpPreference -ExclusionPath ...`). Weigh the security trade-off |

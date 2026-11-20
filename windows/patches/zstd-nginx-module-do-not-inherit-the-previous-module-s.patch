@@ -1,0 +1,28 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: BunkerWeb Windows port <bunkerweb-windows@users.noreply.invalid>
+Date: Fri, 20 Nov 2026 11:53:55 +0100
+Subject: [PATCH] zstd-nginx-module: do not inherit the previous module's
+ feature name
+
+nginx sources the config of every module in one shell, and auto/feature defines $ngx_feature_name whenever a feature
+test passes. zstd-nginx-module's config sets up its library test but never sets ngx_feature_name, so it inherited the
+name left by the module configured before it: stream-lua-nginx-module's NGX_STREAM_LUA_HAVE_SA_RESTART. The ZStandard
+test passes, hence that macro got defined, and stream-lua compiled its sigaction()/SA_RESTART code that MinGW does not
+have (ngx_stream_lua_util.c: 'NGX_RECONFIGURE_SIGNAL' undeclared, 'struct sigaction' unknown). On Linux sigaction exists,
+so the leak is harmless there. The name is cleared before the module's own test.
+
+Upstream: not submitted (zstd-nginx-module, GetPageSpeed fork); a one-line fix there, a bug on every platform without sigaction
+Check: zstd-nginx-module/config sets ngx_feature_name= (or a name of its own) before its first auto/feature use
+
+diff --git a/deps/src/zstd-nginx-module/config b/deps/src/zstd-nginx-module/config
+index 5cd52d5..65252c6 100644
+--- a/deps/src/zstd-nginx-module/config
++++ b/deps/src/zstd-nginx-module/config
+@@ -1,3 +1,7 @@
++# nginx sources every module's config in one shell and auto/feature defines $ngx_feature_name when a test passes:
++# without this the name of the previous module's last feature (NGX_STREAM_LUA_HAVE_SA_RESTART) leaks in
++ngx_feature=
++ngx_feature_name=
+ ngx_feature_incs="#define ZSTD_STATIC_LINKING_ONLY
+ #include <zstd.h>"
+ ngx_feature_test="(void) ZSTD_createCStream_advanced((ZSTD_customMem) {0});

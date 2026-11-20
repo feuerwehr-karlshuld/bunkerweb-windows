@@ -69,7 +69,7 @@ defaults:
 
 env:
   # Part of every build-cache key: bump it to invalidate all caches
-  CACHE_VERSION: "1"
+  CACHE_VERSION: "2"
   # BunkerWeb's Linux packages use Python 3.14; change here if a dependency has no wheel for it yet
   PYTHON_VERSION: "3.14"
   BUSYBOX_URL: https://frippery.org/files/busybox/busybox-w64-FRP-6354-g5f09fb446.exe
@@ -78,8 +78,15 @@ env:
   # identical binary as tools/busybox64.exe (same SHA-256), so it is used as the fallback.
   BUSYBOX_FALLBACK_URL: https://community.chocolatey.org/api/v2/package/busybox/6354.0.0
   BUSYBOX_FALLBACK_MEMBER: tools/busybox64.exe
-  WINSW_URL: https://github.com/winsw/winsw/releases/download/v2.12.0/WinSW.NET461.exe
-  WINSW_SHA256: b5066b7bbdfba1293e5d15cda3caaea88fbeab35bd5b38c41c913d492aadfc4f
+  # 2.13 renamed the .NET Framework build to NET462 (4.6.1 is dropped; every supported Windows Server has 4.7.2+); the
+  # release assets carry a _Release suffix
+  WINSW_URL: https://github.com/winsw/winsw/releases/download/v2.13.0/WinSW.NET462.exe_Release
+  WINSW_SHA256: e139f9c1dec5c87a0f51a01668b6cc819286c26b8d26c21c6a2ac128993496c6
+  # nginx.exe links OpenSSL statically (whole archive, for LuaJIT FFI) and BunkerWeb's own images ship OpenSSL 3.5, so the
+  # MSYS2 package is pinned to the 3.x series (MSYS2 moved to 4.1.0 in Nov 2026, DLLs are libssl-4-x64.dll then). The MSYS2
+  # archive keeps old versions. Change the file name and its SHA-256 together; tools-watch.py reports newer 3.x packages.
+  MSYS2_OPENSSL_PKG: mingw-w64-ucrt-x86_64-openssl-3.6.5-1-any.pkg.tar.zst
+  MSYS2_OPENSSL_SHA256: 773e021ebad83f14b5c103db467411e8ff064663e1c7e7f730e2be72f4117064
 
 jobs:
   # ------------------------------------------------------------------------------------------ ModSecurity (MSVC)
@@ -190,7 +197,7 @@ jobs:
         uses: actions/cache/restore@v6
         with:
           path: build/native
-          key: native-v${{ env.CACHE_VERSION }}-${{ steps.src.outputs.bunkerweb }}-${{ hashFiles('windows/build/apply-windows-port.py', 'windows/build/pathrewrite.py', 'windows/build/patchseries.py', 'windows/patches/**', 'windows/build/patch-modsecurity.py', 'windows/build/build-modsecurity.ps1', 'windows/build/build-native.sh', 'windows/overlay/src/**', '.github/actions/prepare-src/action.yml') }}
+          key: native-v${{ env.CACHE_VERSION }}-${{ steps.src.outputs.bunkerweb }}-${{ env.MSYS2_OPENSSL_SHA256 }}-${{ hashFiles('windows/build/apply-windows-port.py', 'windows/build/pathrewrite.py', 'windows/build/patchseries.py', 'windows/patches/**', 'windows/build/patch-modsecurity.py', 'windows/build/build-modsecurity.ps1', 'windows/build/build-native.sh', 'windows/overlay/src/**', '.github/actions/prepare-src/action.yml') }}
 
       - uses: actions/setup-python@v7
         if: steps.cache.outputs.cache-hit != 'true'
@@ -223,6 +230,17 @@ jobs:
             mingw-w64-ucrt-x86_64-libmaxminddb
             mingw-w64-ucrt-x86_64-file
             mingw-w64-ucrt-x86_64-sqlite3
+
+      # openssl above only pulls in its dependencies: the 3.x series is pinned (see the env block). pacman -U downgrades it.
+      - name: Pin OpenSSL to the 3.x series
+        if: steps.cache.outputs.cache-hit != 'true'
+        shell: msys2 {0}
+        run: |
+          curl -fsSL --retry 5 -o /tmp/openssl.pkg.tar.zst "https://repo.msys2.org/mingw/ucrt64/${{ env.MSYS2_OPENSSL_PKG }}"
+          echo "${{ env.MSYS2_OPENSSL_SHA256 }}  /tmp/openssl.pkg.tar.zst" | sha256sum -c -
+          pacman -U --noconfirm /tmp/openssl.pkg.tar.zst
+          pacman -Q mingw-w64-ucrt-x86_64-openssl
+          ls /ucrt64/bin/libssl-*.dll /ucrt64/bin/libcrypto-*.dll
 
       - name: Build nginx, LuaJIT and Lua modules
         if: steps.cache.outputs.cache-hit != 'true'
@@ -330,7 +348,13 @@ jobs:
           INPUT_REVISION: ${{ inputs.port_revision }}
           GH_TOKEN: ${{ github.token }}
         run: |
-          $version = (Get-Content bunkerweb/src/VERSION -Raw).Trim()
+          # Pre-releases carry a Debian-style "~" in src/VERSION (1.6.18~rc5), which a git tag cannot contain: the port uses
+          # upstream's own tag spelling (1.6.18-rc5) for tags, release names and the installer file name. Inno Setup's
+          # VersionInfoVersion only takes numbers, so it gets the numeric part (1.6.18) separately.
+          $raw = (Get-Content bunkerweb/src/VERSION -Raw).Trim()
+          $version = $raw.Replace('~', '-')
+          if ($version -notmatch '^(\d+\.\d+\.\d+)(-[0-9A-Za-z.]+)?$') { throw "Unexpected bunkerweb/src/VERSION: '$raw'" }
+          $numericVersion = $Matches[1]
           if ($env:INPUT_REVISION) {
             if ($env:INPUT_REVISION -notmatch '^\d+$') { throw "port_revision must be a number" }
             $revision = $env:INPUT_REVISION
@@ -358,8 +382,9 @@ jobs:
             $revision = if ($same -gt 0) { "$same" } else { "$($max + 1)" }
           }
           "version=$version" >> $env:GITHUB_OUTPUT
+          "numeric_version=$numericVersion" >> $env:GITHUB_OUTPUT
           "revision=$revision" >> $env:GITHUB_OUTPUT
-          Write-Host "BunkerWeb $version, Windows port revision $revision"
+          Write-Host "BunkerWeb $version (src/VERSION $raw), Windows port revision $revision"
           $sha = (git rev-parse HEAD:bunkerweb).Trim()
           "bunkerweb=$sha" >> $env:GITHUB_OUTPUT
           Write-Host "bunkerweb submodule commit: $sha"
@@ -450,6 +475,7 @@ jobs:
           $root = (Get-Location).Path
           & $iscc `
             "/DAppVersion=${{ steps.version.outputs.version }}" `
+            "/DAppNumericVersion=${{ steps.version.outputs.numeric_version }}" `
             "/DPortRevision=${{ steps.version.outputs.revision }}" `
             "/DStageDir=$root\build\stage" `
             "/DLicenseFile=$root\bunkerweb\LICENSE.md" `
@@ -560,6 +586,8 @@ jobs:
             "${env:SITE}_USE_REVERSE_PROXY=yes"
             "${env:SITE}_REVERSE_PROXY_URL=/"
             "${env:SITE}_REVERSE_PROXY_HOST=http://127.0.0.1:$env:BACKEND_PORT"
+            # zstd-nginx-module is linked statically since 1.6.18: its directives must be accepted by nginx
+            "${env:SITE}_USE_ZSTD=yes"
           ) | Set-Content -Encoding ascii C:\bunkerweb\etc\bunkerweb\variables.env
           Get-Content C:\bunkerweb\etc\bunkerweb\variables.env
 
@@ -605,6 +633,7 @@ jobs:
           $out = & 'C:\bunkerweb\usr\share\bunkerweb\python\python.exe' 'C:\bunkerweb\usr\share\bunkerweb\deps\python\bin\certbot' plugins --config-dir "$d\etc" --work-dir "$d\work" --logs-dir "$d\log" 2>&1 | Out-String
           Write-Host $out
           if ($LASTEXITCODE -ne 0 -or $out -match 'errored while loading') { throw 'certbot could not load all of its plugins' }
+          if ($out -notmatch 'dns-hosttech') { throw 'certbot does not list the dns-hosttech plugin (new in BunkerWeb 1.6.18)' }
 
       - name: Busybox applets used by BunkerWeb are available
         run: |
@@ -893,6 +922,11 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
+          # a build of an upstream pre-release (1.6.18-rc5) is published as a GitHub pre-release and never becomes "latest"
+          case "$VERSION" in
+            *-*) echo "prerelease=true" >> "$GITHUB_OUTPUT" ;;
+            *) echo "prerelease=false" >> "$GITHUB_OUTPUT" ;;
+          esac
           if [ "$SMOKE_RESULT" = success ]; then
             echo "tag=v${VERSION}-win${REVISION}" >> "$GITHUB_OUTPUT"
             echo "name=BunkerWeb ${VERSION} for Windows (revision ${REVISION})" >> "$GITHUB_OUTPUT"
@@ -946,11 +980,16 @@ jobs:
         shell: bash
         env:
           DRAFT: ${{ steps.names.outputs.draft }}
+          PRERELEASE: ${{ steps.names.outputs.prerelease }}
           RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
         run: |
           {
             if [ "$DRAFT" = true ]; then
               echo "**RELEASE CANDIDATE - the smoke test FAILED. Do not use this on a production server.** Logs: [workflow run]($RUN_URL), \`smoke-test-logs.zip\`."
+              echo
+            fi
+            if [ "$PRERELEASE" = true ]; then
+              echo "**Pre-release:** built from the BunkerWeb pre-release ${VERSION}. Use the latest regular release on production servers."
               echo
             fi
             echo "**BunkerWeb ${VERSION} for Windows** (port revision ${REVISION}) - native Windows services, no containers."
@@ -968,8 +1007,8 @@ jobs:
           name: ${{ steps.names.outputs.name }}
           target_commitish: ${{ github.sha }}
           draft: ${{ steps.names.outputs.draft == 'true' }}
-          prerelease: false
-          make_latest: ${{ steps.names.outputs.draft != 'true' }}
+          prerelease: ${{ steps.names.outputs.prerelease == 'true' }}
+          make_latest: ${{ steps.names.outputs.draft != 'true' && steps.names.outputs.prerelease != 'true' }}
           body_path: release-notes.md
           files: |
             dist/*.exe

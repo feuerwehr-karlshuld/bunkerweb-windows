@@ -27,10 +27,11 @@ The whole chain is also checked, without Windows and in about a minute, by `bash
 | 4 | `nginx-configure-detect-the-system-openssl-pcre2-and-zlib-on` | `deps/src/nginx/auto/lib/{openssl,pcre,zlib}/conf` | nginx's configure skips system libraries on win32 (MSVC source trees); the port builds with MSYS2/GCC | Windows specific | the native build passes without it |
 | 5 | `modsecurity-nginx-always-use-the-empty-dd-debug-macro` | `modsecurity-nginx/src/ddebug.h` | nginx for Windows does not define `NGX_HAVE_VARIADIC_MACROS` | Could go to ModSecurity-nginx | the native build compiles without it |
 | 6 | `lua-resty-core-shdict-free-through-the-ucrt-on-windows` | `lua-resty-core/.../shdict.lua` | `free()` must come from the CRT that allocated the buffer; resty.core loads before `init_by_lua`, so the ffi proxy cannot help | Windows specific | wincompat's ffi proxy becomes active before resty.core loads |
-| 7 | `templator-render-in-one-worker-thread-instead-of-forked` | `common/gen/Templator.py` | no `fork` on Windows | Windows specific | upstream's Templator works with `spawn` |
+| 7 | `templator-render-in-one-worker-thread-instead-of-forked` | `common/gen/Templator.py` | no `fork` on Windows (since 1.6.18 upstream passes `mp_context=mp.get_context("fork")` to the pool explicitly; rebased with a conflict, resolved by keeping upstream's new `_render_global()` first and the single thread) | Windows specific | upstream's Templator works with `spawn` |
 | 8 | `sync-tree-retry-replacing-a-live-generated-file-on-windows` | `common/gen/sync_tree.py` | `os.replace` over a file another process holds open (no `FILE_SHARE_DELETE`) or that is read-only fails with `WinError 5` | Windows specific | `sync_tree()` copes with a busy target on Windows |
 | 9 | `templator-load-the-shipped-libssl-for-the-ssl-ecdh-curve` | `common/gen/Templator.py` | the `ssl_ecdh_curve` probe only looks for `libssl.so*`; the port ships `usr\sbin\libssl-3*.dll` (`build-native.sh`) | Windows specific | no `could not bind libssl` warning without it |
 | 10 | `cache-restore-accept-the-installed-tmp-root-for-folder` | `common/utils/cache_restore.py` | `Path("/bunkerweb/var/tmp/bunkerweb").resolve()` gains a drive letter, the failover row's target does not (and `_check_path` only maps the cache/config roots), so every failover restore raised "Folder cache entry is outside the cache roots" | Windows specific | no such line in `scheduler.log` without it |
+| 11 | `zstd-nginx-module-do-not-inherit-the-previous-module-s` | `deps/src/zstd-nginx-module/config` | nginx sources every module's `config` in one shell and `auto/feature` defines `$ngx_feature_name` when a test passes; the module never sets it, so it inherited stream-lua's `NGX_STREAM_LUA_HAVE_SA_RESTART`, and stream-lua then compiled `sigaction()` code that MinGW lacks (harmless on Linux, which has it) | not submitted (GetPageSpeed fork), a one-line fix there | the module's `config` sets `ngx_feature_name` itself; `build-native.sh`'s "configure sanity" step checks the result |
 
 Every patch carries `Upstream:` and `Check:` lines in its commit message; `patchtool.py lint` (part of the port check)
 refuses a patch without them.
@@ -38,7 +39,10 @@ refuses a patch without them.
 Not patched any more, because a runtime shim covers it (this is what keeps the series short):
 `ffi.C` calls in `api.lua`, `stream_lock.lua`, `iputils.lua`, `lua-resty-ipmatcher`, `lua-resty-openssl` (`inet_pton`,
 `ntohl`, `flock`, `setenv`, ...), `resty.signal`, `ngx.process.get_master_pid`, `"w+"` -> `"w+b"` for uploads,
-`/proc/uptime` in Lua, and `Path.is_absolute()` of rooted paths on Python >= 3.13.
+`/proc/uptime` in Lua, and `Path.is_absolute()` of rooted paths on Python >= 3.13. Since 1.6.18 also CrowdSec's
+`enforcement_state.lua` (`ffi.C.open/write/close/getpid` with Linux `O_*` flags, then `os.rename` over the previous
+checkpoint): `winffi.lua` maps them to the UCRT's `_open/...` with translated flags, `wincompat.lua` gives `os.rename`
+the replace semantics of rename(2).
 
 ## Working with the series
 

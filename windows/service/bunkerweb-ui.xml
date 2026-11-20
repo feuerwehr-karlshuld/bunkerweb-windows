@@ -1,4 +1,4 @@
-<!-- BunkerWeb for Windows: web UI (WinSW 2.12) - port of bunkerweb-ui.service -->
+<!-- BunkerWeb for Windows: web UI (WinSW 2.x) - port of bunkerweb-ui.service -->
 <service>
   <id>bunkerweb-ui</id>
   <name>BunkerWeb (web UI)</name>

@@ -5,6 +5,9 @@
 #                    syntax checks of every changed file, hazard scan against windows/build/hazards.baseline.txt
 #   upstream-watch   nightly and on demand: the same against the newest BunkerWeb release (or `upstream_ref`) without
 #                    touching the pinned submodule in the repository; opens/updates an issue when it no longer applies
+#   tools-watch      nightly and on demand: do the tools and GitHub Actions this repository pins itself (WinSW, busybox-w32,
+#                    waitress, the MSYS2 OpenSSL 3.x package, every `uses:`) have a newer release? Keeps one issue (label tooling-update) up to date and
+#                    closes it when nothing is left; updates you declined go into windows/build/tools-watch.ignore
 #
 # Nothing here proves the port *runs*: that is still the smoke test of the main pipeline.
 
@@ -82,11 +85,20 @@ jobs:
         env:
           REQUESTED: ${{ inputs.upstream_ref }}
         run: |
-          pinned="v$(tr -d '[:space:]' < bunkerweb/src/VERSION)"
+          # src/VERSION spells pre-releases Debian-style (1.6.18~rc5), the git tags with "-" (v1.6.18-rc5)
+          pinned_version="$(tr -d '[:space:]' < bunkerweb/src/VERSION)"
+          pinned="v${pinned_version//\~/-}"
           if [ -n "$REQUESTED" ]; then
             tag="$REQUESTED"
           else
             tag="$(gh api repos/bunkerity/bunkerweb/releases/latest --jq .tag_name)"
+            # The latest regular release can be older than a pinned release candidate: check the pinned one then,
+            # instead of reporting that the port does not apply to a version it has already moved past.
+            latest_version="${tag#v}"
+            if dpkg --compare-versions "${latest_version/-/\~}" lt "$pinned_version"; then
+              echo "Latest release $tag is older than the pinned $pinned, checking the pinned version"
+              tag="$pinned"
+            fi
           fi
           echo "pinned=$pinned" >> "$GITHUB_OUTPUT"
           echo "tag=$tag" >> "$GITHUB_OUTPUT"
@@ -134,4 +146,51 @@ jobs:
             gh issue comment "$existing" --body-file issue.md
           else
             gh issue create --title "$title" --label upstream-update --body-file issue.md
+          fi
+
+  tools-watch:
+    # Scheduled runs and manual runs, like upstream-watch. Needs no submodule: it only reads the pins of this repository.
+    if: github.event_name == 'schedule' || github.event_name == 'workflow_dispatch'
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: read
+      issues: write
+    env:
+      GH_TOKEN: ${{ github.token }}
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: actions/setup-python@v7
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+
+      # exit code 0 = current, 10 = updates (report written), 11 = nothing found but a lookup failed (no verdict);
+      # anything else (2: a pin the script expects is gone, so the script needs an update) fails the job
+      - name: Look for newer versions of the pinned tools and actions
+        id: tools
+        run: |
+          set +e
+          python windows/build/tools-watch.py --report tools-report.md
+          rc=$?
+          echo "rc=${rc}" >> "$GITHUB_OUTPUT"
+          case "$rc" in 0|10|11) exit 0 ;; *) exit "$rc" ;; esac
+
+      # One issue, kept current: its body is replaced (no comment per night), and it is closed once nothing is left.
+      # With no verdict (11) an open issue stays as it is.
+      - name: Update the tooling issue
+        env:
+          RC: ${{ steps.tools.outputs.rc }}
+        run: |
+          title="Pinned build tools or GitHub Actions have updates"
+          gh label create tooling-update --color fbca04 --description "A pinned tool or action has a newer release" 2>/dev/null || true
+          existing="$(gh issue list --state open --label tooling-update --json number --jq '.[0].number // empty')"
+          if [ "$RC" = 10 ]; then
+            if [ -n "$existing" ]; then
+              gh issue edit "$existing" --body-file tools-report.md
+            else
+              gh issue create --title "$title" --label tooling-update --body-file tools-report.md
+            fi
+          elif [ "$RC" = 0 ] && [ -n "$existing" ]; then
+            gh issue close "$existing" --comment "Everything pinned is up to date (or the remaining updates are listed in windows/build/tools-watch.ignore)."
           fi

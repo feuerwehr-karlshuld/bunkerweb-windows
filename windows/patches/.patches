@@ -10,3 +10,4 @@ templator-render-in-one-worker-thread-instead-of-forked.patch
 sync-tree-retry-replacing-a-live-generated-file-on-windows.patch
 templator-load-the-shipped-libssl-for-the-ssl-ecdh-curve.patch
 cache-restore-accept-the-installed-tmp-root-for-folder.patch
+zstd-nginx-module-do-not-inherit-the-previous-module-s.patch

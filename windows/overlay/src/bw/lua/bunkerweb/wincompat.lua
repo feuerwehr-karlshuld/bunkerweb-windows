@@ -6,9 +6,11 @@
 --   * io.popen / os.execute running commands through busybox-w32 "sh -c"
 --   * io.open: text mode on Windows rewrites 0x0A as 0x0D 0x0A, so every mode that writes gets "b" (BunkerWeb writes
 --     tar.gz uploads that way); "/proc/uptime" is served from GetTickCount64
+--   * os.rename replaces an existing destination file, like rename(2) (MoveFileEx)
 --   * a tiny libc emulation (fopen/fileno/flock/fputs/fclose/fchmod) backed by Win32 file handles and LockFileEx
 --     (flock semantics), plugged into ffi.C by the ffi proxy of winffi.lua (package.loaded["ffi"]), which also
---     resolves inet_pton/ntohl/... (winsock), setenv/unsetenv/environ (UCRT) for every module required after this one
+--     resolves inet_pton/ntohl/... (winsock), setenv/unsetenv/environ and open/write/close/getpid (UCRT) for every
+--     module required after this one
 --   * resty.signal (a C library that does not exist here) and ngx.process.get_master_pid, based on the named events
 --     nginx for Windows listens on
 -- Not covered at runtime: modules nginx loads before init_by_lua (resty.core), see windows/patches.
@@ -65,6 +67,7 @@ cdef [[ int SetEvent(void *hEvent); ]]
 cdef [[ uint64_t GetTickCount64(void); ]]
 cdef [[ uint32_t GetEnvironmentVariableA(const char *lpName, char *lpBuffer, uint32_t nSize); ]]
 cdef [[ int SetEnvironmentVariableA(const char *lpName, const char *lpValue); ]]
+cdef [[ int MoveFileExA(const char *lpExistingFileName, const char *lpNewFileName, uint32_t dwFlags); ]]
 
 local k32 = ffi.load("kernel32")
 
@@ -84,6 +87,8 @@ local INFINITE = 0xFFFFFFFF
 local EVENT_MODIFY_STATE = 0x0002
 local LOCKFILE_FAIL_IMMEDIATELY = 0x1
 local LOCKFILE_EXCLUSIVE_LOCK = 0x2
+local MOVEFILE_REPLACE_EXISTING = 0x1
+local MOVEFILE_COPY_ALLOWED = 0x2 -- what the UCRT's rename() passes
 -- flock() is emulated with a one byte lock far beyond any real file content, so the lock never
 -- blocks reads or writes of the file (Windows byte range locks are mandatory). The Python side
 -- (python-site/fcntl.py) locks the very same byte.
@@ -464,6 +469,29 @@ end
 
 function libc.fchmod()
 	return 0
+end
+
+-- ------------------------------------------------------------------ os.rename
+-- rename(2) replaces an existing destination file atomically, the CRT's rename() on Windows refuses (EEXIST/EACCES).
+-- CrowdSec's enforcement checkpoints (enforcement_state.lua, since BunkerWeb 1.6.18) are published by renaming a
+-- temporary file over the previous one, so without this every checkpoint after the first fails. Same semantics as
+-- python-site/sitecustomize.py's os.rename = os.replace. An existing directory is still never replaced, like rename(2)
+-- onto a non-empty one. Windows also refuses to replace a file another process holds open without FILE_SHARE_DELETE.
+if not os.bw_wincompat_rename then
+	os.bw_wincompat_rename = true
+	local original_rename = os.rename
+	os.rename = function(from, to)
+		if type(from) ~= "string" or type(to) ~= "string" then
+			return original_rename(from, to)
+		end
+		if k32.MoveFileExA(winpath(from), winpath(to), bit.bor(MOVEFILE_REPLACE_EXISTING, MOVEFILE_COPY_ALLOWED)) ~= 0 then
+			return true
+		end
+		local err = k32.GetLastError()
+		set_errno_from_win32(err)
+		-- the shape of os.rename's own failure: nil, message, errno
+		return nil, from .. ": rename to " .. to .. " failed (Windows error " .. tonumber(err) .. ")", ffi.errno()
+	end
 end
 
 -- ------------------------------------------------------------------ signals and pid

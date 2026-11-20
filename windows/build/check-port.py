@@ -15,6 +15,7 @@ marker file exists). Reports every problem, exit code 1 if there is any.
 import filecmp
 import json
 import os
+import re
 import sys
 from pathlib import Path
 
@@ -97,7 +98,8 @@ def main():
             problems.append(f"{rel}: wincompat is not the first statement of init_by_lua_block")
     for conf in sorted((src / "common").rglob("*.conf")):
         text = conf.read_text(encoding="utf-8", newline="")
-        if " reuseport" in text:
+        # the directive or a " reuseport" value; Jinja names such as {{ reuseport_directive }} are fine
+        if re.search(r" reuseport(?!_)", text):
             problems.append(f"{conf.relative_to(src).as_posix()}: reuseport is still present (nginx for Windows has no SO_REUSEPORT)")
 
     summary = ", ".join(f"{n} {suffix}" for suffix, n in sorted(counts.items()))

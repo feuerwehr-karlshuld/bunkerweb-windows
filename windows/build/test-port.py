@@ -6,6 +6,7 @@
 
 * path rewrite (pathrewrite.py): golden cases, idempotence, what must NOT be touched
 * patch series tooling (patchseries.py): lint rules
+* tools-watch.py (nightly update check of the pinned tools): finds every pin, version comparison, ignore file
 * Python isabs shim (python-site/sitecustomize.py) against pathlib's Windows flavour
 * Lua ffi proxy (winffi.lua) with a fake ffi, run in LuaJIT through lupa (skipped, loudly, when lupa is missing;
   set BW_REQUIRE_LUPA=1 to make that an error, CI does)
@@ -176,6 +177,67 @@ class WinffiLua(unittest.TestCase):
         if jit_os != "Windows":
             self.assertTrue(empty)
             self.assertTrue(ffi_untouched)
+
+
+class ToolsWatch(unittest.TestCase):
+    """tools-watch.py (nightly update check of the pinned tools): the offline parts."""
+
+    @classmethod
+    def setUpClass(cls):
+        cls.tw = load_module("bw_tools_watch", BUILD / "tools-watch.py")
+
+    def test_every_pin_is_found(self):
+        # if a pin is renamed or reformatted the nightly check must fail loudly, not go quiet
+        pins = self.tw.find_pins()
+        names = {pin.name for pin in pins}
+        self.assertTrue({"winsw", "busybox-w32", "waitress", "msys2-openssl", "actions/checkout", "actions/cache"} <= names, names)
+        by_name = {pin.name: pin.current for pin in pins}
+        self.assertRegex(by_name["winsw"], r"^\d+\.\d+\.\d+$")
+        self.assertRegex(by_name["busybox-w32"], r"^\d+$")
+        self.assertRegex(by_name["waitress"], r"^\d+\.\d+\.\d+$")
+        self.assertRegex(by_name["msys2-openssl"], r"^3\.\d+\.\d+-\d+$")  # nginx.exe links the 3.x series
+
+    def test_local_actions_are_not_pins(self):
+        self.assertFalse([pin for pin in self.tw.find_pins() if pin.name.startswith(".")])
+
+    def test_missing_pin_is_reported(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            (root / ".github" / "workflows").mkdir(parents=True)
+            (root / ".github" / "workflows" / "w.yml").write_text("jobs: {}\n", encoding="utf-8")
+            (root / "windows" / "build").mkdir(parents=True)
+            (root / "windows" / "build" / "build-python.ps1").write_text("", encoding="utf-8")
+            with self.assertRaises(LookupError) as raised:
+                self.tw.find_pins(root)
+        self.assertIn("WINSW_URL", str(raised.exception))
+
+    def test_action_versions(self):
+        outdated = self.tw.action_is_outdated
+        self.assertFalse(outdated("v7", "v7.0.1"))  # a major pin follows its own releases
+        self.assertFalse(outdated("v7", "v7.9.0"))
+        self.assertTrue(outdated("v7", "v8.0.0"))
+        self.assertTrue(outdated("v7.0.1", "v7.0.2"))  # an exact pin follows nothing
+        self.assertFalse(outdated("v7.0.2", "v7.0.2"))
+        self.assertFalse(outdated("main", "v8.0.0"))  # a branch or a SHA cannot be compared
+        self.assertFalse(outdated("5f09fb446" * 4, "v8.0.0"))
+
+    def test_plain_versions(self):
+        self.assertTrue(self.tw.version_is_newer("3.0.2", "3.0.10"))  # numeric, not alphabetical
+        self.assertFalse(self.tw.version_is_newer("3.0.2", "3.0.2"))
+        self.assertFalse(self.tw.version_is_newer("3.0.2", "3.0.2rc1"))
+
+    def test_package_versions(self):
+        key = self.tw.package_version_key
+        self.assertGreater(key("3.6.10-1"), key("3.6.5-3"))  # numeric, not alphabetical
+        self.assertGreater(key("3.6.5-2"), key("3.6.5-1"))  # pkgrel counts
+
+    def test_ignore_file(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "ignore"
+            path.write_text("# comment\n\nwinsw 2.13.0  # why\nactions/checkout v8.0.0\n", encoding="utf-8")
+            self.assertEqual(self.tw.read_ignore(path), {("winsw", "2.13.0"), ("actions/checkout", "8.0.0")})
+        # what the repository ships must parse as well
+        self.assertIsInstance(self.tw.read_ignore(), set)
 
 
 if __name__ == "__main__":

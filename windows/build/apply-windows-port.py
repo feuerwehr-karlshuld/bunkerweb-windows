@@ -115,11 +115,18 @@ for rel in (
     "common/confs/api.conf",
     "common/confs/default-server-http.conf",
     "common/confs/server-http/ssl-certificate-lua.conf",
-    "common/confs/server-stream/server-stream.conf",
 ):
     total += rep(rel, " reuseport", "", None)
 if total == 0:
     errors.append("no reuseport occurrence removed")
+# Stream listeners take reuseport from a Jinja variable (set only for the first service on a shared port, since 1.6.18):
+# blank its value, a plain " reuseport" removal would also cut the variable's name.
+rep(
+    "common/confs/server-stream/server-stream.conf",
+    '{% set reuseport_directive = " reuseport" if ',
+    '{% set reuseport_directive = "" if ',
+    1,
+)
 
 # ---------------------------------------------------------------- 3b. DNS_RESOLVERS default
 # Upstream defaults to 127.0.0.11, the embedded DNS server of Docker. On Windows nothing listens there: every DNS lookup of

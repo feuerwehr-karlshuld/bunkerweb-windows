@@ -7,7 +7,7 @@
 5	api/utils/gunicorn.conf.py	write open (py): w
 1	api/utils/gunicorn.conf.py	write open (py): write_text
 1	bw/entrypoint.sh	/proc: /proc/uptime
-22	bw/entrypoint.sh	/tmp: /tmp/bunkerweb
+23	bw/entrypoint.sh	/tmp: /tmp/bunkerweb
 3	bw/entrypoint.sh	/tmp: /tmp/bunkerweb_needs_config
 1	bw/entrypoint.sh	/tmp: /tmp/bunkerweb_reloading
 1	bw/entrypoint.sh	/tmp: /tmp/variables.env
@@ -41,21 +41,28 @@
 5	bw/lua/bunkerweb/pushswap.lua	shell command: rm
 1	bw/lua/bunkerweb/pushswap.lua	signal: SIGKILL
 1	bw/lua/bunkerweb/pushswap.lua	write open (lua): w
+1	common/cli/CLI.py	shell command: file
+1	common/cli/CLI.py	shell command: service
+1	common/cli/CLI.py	shell command: systemctl
 2	common/cli/main.py	shell command: service
 1	common/confs/default-server-http.conf	nginx directive: http3
 5	common/confs/http.conf	/tmp: /tmp/bunkerweb
 1	common/confs/http.conf	nginx directive: sendfile
 1	common/confs/init-lua.conf	/tmp: /tmp/bunkerweb
 1	common/confs/init-stream-lua.conf	/tmp: /tmp/bunkerweb
-3	common/confs/init-worker-lua.conf	/tmp: /tmp/bunkerweb
+4	common/confs/init-worker-lua.conf	/tmp: /tmp/bunkerweb
 1	common/confs/server-http/ssl-certificate-lua.conf	nginx directive: http3
 2	common/core/antibot/captcha.lua	/dev: /dev/urandom
-1	common/core/backup/backup.py	symlink/chmod: .chmod(
 3	common/core/backup/ui/actions.py	shell command: file
 1	common/core/bunkernet/bunkernet.lua	process spawn: io.popen
 2	common/core/bunkernet/bunkernet.lua	shell command: service
 1	common/core/bunkernet/bunkernet.lua	shell command: uname
 2	common/core/cors/cors.lua	shell command: service
+1	common/core/crowdsec/enforcement_state.lua	ffi.C symbol: close
+2	common/core/crowdsec/enforcement_state.lua	ffi.C symbol: getpid
+1	common/core/crowdsec/enforcement_state.lua	ffi.C symbol: open
+1	common/core/crowdsec/enforcement_state.lua	ffi.C symbol: write
+1	common/core/crowdsec/enforcement_state.lua	uid/gid: umask
 1	common/core/crowdsec/lib/iputils.lua	ffi.C symbol: inet_pton
 3	common/core/crowdsec/lib/stream_lock.lua	ffi.C symbol: fclose
 1	common/core/crowdsec/lib/stream_lock.lua	ffi.C symbol: fileno
@@ -83,13 +90,14 @@
 1	common/core/pro/jobs/download-pro-plugins.py	symlink/chmod: .chmod(
 1	common/core/reverseproxy/confs/http/reverse-proxy.conf	/tmp: /tmp/bunkerweb
 1	common/db/Database.py	path separator: split(":")
+1	common/db/Database.py	shell command: id
 1	common/db/Database.py	shell command: openssl
 1	common/db/Database.py	symlink/chmod: .chmod(
 1	common/db/alembic/env.py	path separator: split(":")
-1	common/gen/Templator.py	fork: set_start_method
 1	common/gen/Templator.py	path separator: ":".join
 2	common/gen/Templator.py	write open (py): write_text
 1	common/gen/main.py	shell command: file
+1	common/gen/save_config.py	path separator: split(":")
 1	common/gen/save_config.py	shell command: file
 1	common/gen/sync_tree.py	/proc: /proc/uptime
 2	common/gen/sync_tree.py	/tmp: /tmp/bunkerweb
@@ -101,6 +109,8 @@
 1	common/helpers/healthcheck-autoconf.sh	/tmp: /tmp/bunkerweb
 1	common/helpers/healthcheck-scheduler.sh	/tmp: /tmp/bunkerweb
 1	common/helpers/healthcheck-ui.sh	/tmp: /tmp/bunkerweb
+1	common/helpers/utils.sh	/tmp: /tmp/bunkerweb
+1	common/helpers/utils.sh	/tmp: /tmp/bunkerweb.XXXXXX
 3	common/helpers/utils.sh	/tmp: /tmp/sed
 1	common/helpers/utils.sh	executable path: /usr/local/bin/python3
 1	common/helpers/utils.sh	executable path: /usr/local/sbin/nginx
@@ -109,6 +119,7 @@
 1	common/utils/cache_restore.py	/tmp: /tmp/bunkerweb
 1	common/utils/cache_restore.py	isabs: is_absolute
 2	common/utils/cache_restore.py	symlink/chmod: .chmod(
+1	common/utils/common_utils.py	/tmp: /tmp/bunkerweb
 1	common/utils/common_utils.py	isabs: is_absolute
 2	common/utils/common_utils.py	isabs: isabs
 2	common/utils/common_utils.py	os resource: sched_getaffinity
@@ -164,6 +175,7 @@
 2	deps/src/lua-resty-ipmatcher/resty/ipmatcher.lua	ffi.C symbol: inet_pton
 4	deps/src/lua-resty-ipmatcher/resty/ipmatcher.lua	ffi.C symbol: ntohl
 6	deps/src/lua-resty-openssl/lib/resty/openssl/asn1.lua	unix socket: unix:
+2	deps/src/lua-resty-openssl/lib/resty/openssl/include/evp/pkey.lua	shell command: id
 1	deps/src/lua-resty-openssl/lib/resty/openssl/x509/altname.lua	ffi.C symbol: inet_ntop
 2	deps/src/lua-resty-openssl/lib/resty/openssl/x509/altname.lua	ffi.C symbol: inet_pton
 1	deps/src/lua-resty-openssl/scripts/x509_autogen.py	write open (py): w
@@ -176,13 +188,14 @@
 1	deps/src/lua-resty-template/lib/resty/template.lua	write open (lua): wb
 1	deps/src/luajit-geoip/geoip/init.lua	ffi.load: GeoIP
 1	deps/src/luajit-geoip/geoip/mmdb.lua	ffi.load: /bunkerweb/usr/share/bunkerweb/deps/lib/libmaxminddb.so
+1	scheduler/JobScheduler.py	isabs: is_absolute
 1	scheduler/JobScheduler.py	signal: SIGHUP
 1	scheduler/JobScheduler.py	symlink/chmod: .chmod(
 10	scheduler/entrypoint.sh	/tmp: /tmp/bunkerweb
 1	scheduler/main.py	/tmp: /tmp/bunkerweb_needs_config.
 5	scheduler/main.py	signal: SIGHUP
 2	scheduler/main.py	signal: SIGINT
-3	scheduler/main.py	signal: SIGTERM
+4	scheduler/main.py	signal: SIGTERM
 4	scheduler/main.py	symlink/chmod: .chmod(
 4	scheduler/main.py	write open (py): write_text
 1	ui/app/dependencies.py	isabs: is_absolute
@@ -191,7 +204,6 @@
 1	ui/app/models/ui_data.py	write open (py): write_text
 3	ui/app/routes/logs.py	isabs: isabs
 3	ui/app/routes/plugins.py	isabs: isabs
-1	ui/app/routes/setup.py	path separator: split(":")
 1	ui/app/utils.py	signal: SIGTERM
 3	ui/entrypoint.sh	/tmp: /tmp/bunkerweb
 1	ui/main.py	signal: SIGHUP

@@ -25,7 +25,7 @@ index fe04cfe..0c3e534 100644
  	# healthcheck endpoint
  	location ~ ^/healthz$ {
 diff --git a/common/settings.json b/common/settings.json
-index 573c919..3f6eb98 100644
+index 8fe4c19..7c15cb2 100644
 --- a/common/settings.json
 +++ b/common/settings.json
 @@ -244,6 +244,15 @@

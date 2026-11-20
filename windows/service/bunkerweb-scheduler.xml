@@ -1,4 +1,4 @@
-<!-- BunkerWeb for Windows: scheduler (WinSW 2.12) - port of bunkerweb-scheduler.service -->
+<!-- BunkerWeb for Windows: scheduler (WinSW 2.x) - port of bunkerweb-scheduler.service -->
 <service>
   <id>bunkerweb-scheduler</id>
   <name>BunkerWeb (scheduler)</name>

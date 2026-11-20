@@ -48,6 +48,9 @@ windows/build/
                             new upstream tag in a scratch repo (build/patchwork); never writes into bunkerweb/
   port-check.sh             the fast, Linux-friendly checks: patch lint, test-port.py (+ test-winffi.lua through lupa), apply the port,
                             check-port.py (syntax of every changed file), scan-hazards.py (new Linux-isms vs hazards.baseline.txt)
+  tools-watch.py            nightly update check of what THIS repo pins (actions `uses:`, WinSW, busybox-w32, waitress, the MSYS2 OpenSSL 3.x package); reads the pins
+                            from the workflow/build-python.ps1 itself and fails when it cannot find one; tools-watch.ignore lists declined
+                            updates (`<name> <version>  # why`)
   patch-modsecurity.py      same mechanism, but ONLY for what build-modsecurity.ps1 compiles (deps/src/modsecurity); separate so
                             the slow `modsecurity` job's cache key does not depend on the rest of the port
   build-modsecurity.ps1     libModSecurity.dll, MSVC 2022 + conan + CMake (ModSecurity's own build/win32)
@@ -61,7 +64,7 @@ windows/overlay/            files copied into the build: wincompat.lua + winffi.
                             resty.signal, ...), python-site/ (fcntl, pwd, grp, sitecustomize incl. ntpath.isabs), bwsvc.py (service runner), bwctl.py (operator CLI), bwctl.cmd, bwcli.cmd, certbot entry
 windows/service/*.xml       WinSW 2.x service definitions: bunkerweb-nginx, -scheduler, -ui, -api
 .github/workflows/bunkerweb-windows.yml   pipeline (below)
-.github/workflows/port-check.yml          ubuntu, ~1 min: port-check.sh on every push/PR; nightly against the newest upstream release (opens an `upstream-update` issue)
+.github/workflows/port-check.yml          ubuntu, ~1 min: port-check.sh on every push/PR; nightly: `upstream-watch` (port vs. the newest upstream release, opens an `upstream-update` issue) and `tools-watch` (do WinSW, busybox-w32, waitress or an action we pin have a newer release? one `tooling-update` issue, closed when nothing is left)
 .github/actions/prepare-src/action.yml    robocopy bunkerweb/src -> build/src, then patch-modsecurity.py + apply-windows-port.py (input `scope: modsecurity` = only the first)
 ```
 
@@ -105,7 +108,12 @@ target commit is the current one (a rerun keeps its number).
 
 - Every job: `core.autocrlf false` + `core.longpaths true`, checkout with submodules, setup-python, then `prepare-src`.
   LF endings matter: the anchored replacements match exact text including newlines.
-- Downloads are pinned and SHA-256 verified (busybox-w32, WinSW 2.12.0 `WinSW.NET461.exe`). Change URL and hash together.
+- Downloads are pinned and SHA-256 verified (busybox-w32, WinSW 2.13.0 `WinSW.NET462.exe_Release`, and the MSYS2 OpenSSL 3.x package
+  `MSYS2_OPENSSL_PKG`, installed with `pacman -U` because MSYS2's default is OpenSSL 4 since Nov 2026). Change URL/name and hash together.
+  The nightly `tools-watch` job (`port-check.yml`) reports newer releases of these, of waitress and of every action; an update that
+  was looked at and declined goes into `windows/build/tools-watch.ignore` (none at the moment). If you rename `WINSW_URL`, `BUSYBOX_URL`,
+  `MSYS2_OPENSSL_PKG` or `$WAITRESS_VERSION`, `tools-watch.py` must follow (a unit test fails otherwise). The `native` cache key contains
+  `MSYS2_OPENSSL_SHA256`.
 - `PYTHON_VERSION` is `3.14` (what BunkerWeb's Linux packages use). If a dependency has no cp314 wheel, switch to `3.13`.
 - Release/tag format: `v<VERSION>-win<N>` (release) and `v<VERSION>-win<N>-RC` (draft); `<VERSION>` is `bunkerweb/src/VERSION` of the submodule
   with `~` replaced by `-` (`1.6.18~rc5` -> `1.6.18-rc5`; git refs cannot contain `~`, and Inno Setup's `VersionInfoVersion` gets only
@@ -186,6 +194,36 @@ target commit is the current one (a rerun keeps its number).
 history below refer to `apply-windows-port.py` as it was before the robustness refactor (the multi-line ones are now patches, see the ledger in
 `windows/patches/README.md`).*
 
+- **Native job of the second 1.6.18-rc5 run (2026-11-20, fix unverified):** nginx now compiles and links (zstd static, patch 11 worked).
+  It failed in "runtime DLLs and tools" with `libssl-3*.dll is missing from sbin`: the MSYS2 `openssl` package had moved to **4.1.0**
+  (DLLs `libssl-4-x64.dll`), so OpenSSL 4 had been linked into `nginx.exe` as well. Decision: stay on 3.x, as BunkerWeb's own images do
+  (3.5); nothing has ever run on 4 (nginx, lua-nginx-module, lua-resty-openssl's FFI declarations, the Templator `libssl` probe). The
+  workflow pins `MSYS2_OPENSSL_PKG` 3.6.5-1 from the MSYS2 archive (`pacman -U` after the normal install, SHA-256 checked, part of the
+  `native` cache key), `build-native.sh` has an "OpenSSL version" group that fails first thing when it is not 3.x, and `tools-watch.py`
+  reports newer 3.x packages (never 4.x). Unverified: `pacman -U` downgrade over the installed 4.1 (a package that depends on 4 would
+  stop it), the rest of the native job (verify group, DLL closure) and everything after it.
+
+- **Native job of the first 1.6.18-rc5 run (2026-11-20, fix unverified):** failed in `nginx: build` with
+  `'NGX_RECONFIGURE_SIGNAL' undeclared` / `struct sigaction` unknown in `stream-lua-nginx-module/.../ngx_stream_lua_util.c`. Everything
+  before it passed (zstd compiled, `configure`, the filter-order assertion). Cause: **our zstd addition**, not upstream. nginx sources
+  all module `config` scripts in one shell and `auto/feature` defines `$ngx_feature_name` when a test passes; `zstd-nginx-module`
+  never sets it, so it inherited stream-lua's `NGX_STREAM_LUA_HAVE_SA_RESTART` and stream-lua compiled its `sigaction` code (the
+  configure log said `SA_RESTART ... not found` for both lua modules). Reproduced on Linux with nginx's real `configure` (leak with
+  a forced "not found", clean with the patch). Fix: patch 11 (`zstd-nginx-module-do-not-inherit-...`), plus a "configure sanity"
+  step in `build-native.sh` that fails right after `configure` if either `*_LUA_HAVE_SA_RESTART` is defined. The zstd link and the
+  rest of `make` are still unseen. Lesson: a new static nginx module must be checked for config scripts that rely on shell state.
+- **Tooling watch (2026-11-20, unverified in CI):** `port-check.yml` got a third job, `tools-watch` (nightly + manual, no separate
+  workflow): `windows/build/tools-watch.py` finds the pins itself and looks up the newest release (GitHub releases, frippery.org with the
+  GitHub tags as fallback, PyPI). One issue labelled `tooling-update` is created/edited, and closed once nothing is left; an
+  inconclusive lookup (exit 11) leaves it alone. Checked by hand the same day: all actions are on their newest major, busybox
+  FRP-6354 and waitress 3.0.2 are current.
+- **WinSW 2.12.0 -> 2.13.0 (2026-11-20, unverified in CI):** upstream calls the release "largely experimental" (not on NuGet), which was
+  the only reason to hold back; the diff shows no change to what we use: the `Started process <pid>` wrapper log wording and the
+  `roll-by-size` log mode are untouched (the log change only replaces the zip library), `stopparentprocessfirst`'s process-tree stop
+  now keeps a handle per child (PID reuse), `SignalStopped` no longer throws. The .NET Framework build is now `WinSW.NET462.exe`
+  (4.6.1 dropped; Windows Server 2019 has 4.7.2). The asset is `WinSW.NET462.exe_Release`; SHA-256 computed from the download and
+  equal to the digest GitHub shows. The `package` cache key contains `WINSW_SHA256`, so no `CACHE_VERSION` bump. Watch in the next run:
+  the smoke test's stop/restart/uninstall steps (the service stop path) and the `Started process` count in `<svc>.wrapper.log`.
 - **Upgrade v1.6.17 -> v1.6.18-rc5 (2026-11-20, Linux port check green, nothing of it has run in CI):**
   - Patch series: `patchtool.py import --rev v1.6.18-rc5`; only the Templator patch conflicted (upstream now renders the
     global templates first and passes `mp.get_context("fork")` explicitly), resolved keeping the single worker thread, `Check:`

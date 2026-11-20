@@ -1251,29 +1251,7 @@ the installer was built from. Keep the repository public, or otherwise provide t
 
 ---
 
-## 14. Go-live checklist
-
-- [ ] Installer downloaded from a release whose smoke test passed; SHA-256 verified.
-- [ ] Old nginx service and win-acme task **disabled**, not removed (rollback path 4.3 tested once).
-- [ ] `bwctl status`: nginx, scheduler (and UI) running, health `ok`, no `IS_LOADING`.
-- [ ] Server rebooted once: everything comes back on its own.
-- [ ] Config repository with `.gitattributes` and `Apply-BunkerWebConfig.ps1`; the apply process tested end to end.
-- [ ] Router forwards 80/443 to the server; port 80 reachable worldwide.
-- [ ] For each hostname: A record set, no stray AAAA, CAA OK.
-- [ ] All certificates are **production** (`Get-ServedCertificate` issuer check), not staging or self-signed.
-- [ ] Each backend reachable from the server; LAN backends firewalled to accept only 192.168.1.50; local apps on 127.0.0.1.
-- [ ] Each app configured for the reverse proxy (trusted proxy, public URL).
-- [ ] Each app moved from `SECURITY_MODE=detect` to `block`.
-- [ ] Split DNS in place if there is no hairpin NAT.
-- [ ] UI admin has a strong password and TOTP; UI not exposed (or option C with a secret path and TOTP).
-- [ ] Decision on `USE_BUNKERNET` / `SEND_ANONYMOUS_REPORT` documented.
-- [ ] Backups: git pushed, `USE_BACKUP=yes`, `C:\bunkerweb\etc\bunkerweb`, `C:\bunkerweb\var\lib\bunkerweb` and `C:\bunkerweb\var\cache\bunkerweb\letsencrypt` in the server backup.
-- [ ] Scheduled tasks: certificate check (8.5) and log rotation (11.2).
-- [ ] This document updated with your real values.
-
----
-
-## 15. References
+## 14. References
 
 - Windows port (architecture, build, limitations): [`windows/README.md`](windows/README.md)
 - BunkerWeb repository: https://github.com/bunkerity/bunkerweb

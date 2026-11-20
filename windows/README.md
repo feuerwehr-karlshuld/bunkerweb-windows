@@ -48,6 +48,7 @@ All of it is written for Linux. The port keeps BunkerWeb's own code and Linux la
 | gunicorn | waitress (web UI) and uvicorn (API). |
 | `systemctl reload bunkerweb-scheduler` | `bwctl reload-scheduler`, which uses a named event (ACL: SYSTEM and Administrators) and is mapped to the scheduler's SIGHUP handler. |
 | Config generator's libssl probe for `ssl_ecdh_curve` (`find_library("ssl")`, `libssl.so.*`) | Loads the shipped `usr\sbin\libssl-3-x64.dll` (patch `templator-load-the-shipped-libssl-...`). |
+| System OpenSSL (`libssl.a` of MSYS2 is linked into `nginx.exe`) | Pinned to the MSYS2 3.x package named in the workflow (`MSYS2_OPENSSL_PKG` + SHA-256), installed with `pacman -U` after the normal install. MSYS2's default moved to OpenSSL 4.1 (`libssl-4-x64.dll`) in November 2026; `build-native.sh` fails early when it does not get 3.x. Moving to 4 needs a look at nginx, lua-nginx-module, lua-resty-openssl (already knows `OPENSSL_4X`) and the DLL globs (`libssl-3*`) first. |
 | `DNS_RESOLVERS` default `127.0.0.11` (Docker's DNS) | Public resolvers (one-line replacement in `apply-windows-port.py`, step 3b). |
 | `os.replace` over a live generated file | Retried for up to 20 s on `PermissionError` (patch `sync-tree-retry-replacing-...`), because Windows refuses to replace files that another process has open. |
 
@@ -57,10 +58,10 @@ The port is deliberately **layered**, from the most robust against upstream chan
 1. **Runtime shims** (`overlay/`): `wincompat.lua` + `winffi.lua` for Lua (ffi proxy, binary `io.open`, `resty.signal`,
    `get_master_pid`, `/proc/uptime`, busybox `popen`/`execute`) and `python-site/` for Python (POSIX modules,
    `subprocess`, `ntpath.isabs`). Nothing in BunkerWeb's sources is touched for these.
-2. **Patch series** (`patches/*.patch`, git format-patch files): the multi-line changes with context. Ten patches,
+2. **Patch series** (`patches/*.patch`, git format-patch files): the multi-line changes with context. Eleven patches,
    listed in the [ledger](patches/README.md) (HTTP/3 off, the `HEALTHCHECK_PORT` setting, `sync_tree.py`, nginx's
    `configure` on win32, the ModSecurity-nginx `dd()` macro, `free()` in lua-resty-core's shdict, the Templator without
-   `fork`, ...). Every patch states why it exists, its upstream status and how to tell it is obsolete.
+   `fork`, the zstd module's configure script, ...). Every patch states why it exists, its upstream status and how to tell it is obsolete.
 3. **One-line replacements** in [`build/apply-windows-port.py`](build/apply-windows-port.py) (anchored and counted): no
    `load_module` lines, the `select` event model, no `reuseport`, `os.uname()` in `nginx.conf`, the early error log
    path for `nginx -t`, `require "bunkerweb.wincompat"` in `init_by_lua`, the `PYTHONPATH` separator and the hook
@@ -93,11 +94,16 @@ against the newest BunkerWeb release, which opens an issue when the port no long
 
 | Check | Script | Finds |
 |---|---|---|
-| unit tests | `build/test-port.py` (+ `test-winffi.lua`) | regressions in the path rewrite (golden cases), the `isabs` shim, the Lua ffi proxy (fake ffi in LuaJIT through `lupa`), the patch lint |
+| unit tests | `build/test-port.py` (+ `test-winffi.lua`) | regressions in the path rewrite (golden cases), the `isabs` shim, the Lua ffi proxy (fake ffi in LuaJIT through `lupa`), the patch lint, the pin parsing of `tools-watch.py` |
 | patch series lint | `build/patchtool.py lint` | patches without reason / `Upstream:` / `Check:` lines |
 | apply the port | `build/apply-windows-port.py` | stale patches and anchors, overlay collisions |
 | static checks | `build/check-port.py` | every changed file still compiles (Python), parses (LuaJIT, Jinja2, JSON); `wincompat` is first in `init_by_lua`; no `reuseport` left |
 | hazard scan | `build/scan-hazards.py` | new Linux-isms (libc symbols, shell commands, native libraries, `fork`, signals, ...) compared with `build/hazards.baseline.txt` |
+
+A third nightly job of the same workflow, `tools-watch` (`build/tools-watch.py`, declined updates in `build/tools-watch.ignore`),
+looks at what this repository pins itself rather than at BunkerWeb: every GitHub Action, WinSW, busybox-w32, waitress and the MSYS2
+OpenSSL 3.x package. It keeps one
+issue labelled `tooling-update` current and closes it when nothing is left. Its parsing of the pins is part of the unit tests.
 
 None of this proves that the port *runs*: the smoke test of the main pipeline still does that.
 
@@ -116,6 +122,7 @@ windows/
     test-port.py, test-winffi.lua   unit tests (path rewrite, isabs shim, Lua ffi proxy)
     check-port.py             syntax checks of every file the port changed
     scan-hazards.py, hazards.baseline.txt   new Linux-isms in upstream code, compared with a reviewed baseline
+    tools-watch.py, tools-watch.ignore      nightly check for newer releases of the pinned tools and actions
     build-modsecurity.ps1     libModSecurity.dll (MSVC 2022 + conan + CMake)
     build-native.sh           nginx.exe, LuaJIT, cjson/gd, Lua libraries, runtime DLLs (MSYS2 UCRT64)
     build-python.ps1          private CPython + BunkerWeb requirements (+ certbot DNS alias patch)

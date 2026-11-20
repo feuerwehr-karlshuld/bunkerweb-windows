@@ -50,6 +50,18 @@ endgroup() { echo "::endgroup::"; }
 [ -f "$SRC/WINDOWS_PORT" ] || { echo "$SRC is not a patched copy (run apply-windows-port.py first)" >&2; exit 1; }
 [ -f "$MODSEC/libModSecurity.dll" ] || { echo "libModSecurity.dll not found in $MODSEC" >&2; exit 1; }
 
+# ------------------------------------------------------------------------------------- OpenSSL major
+group "OpenSSL version"
+# The workflow pins the MSYS2 package to the 3.x series (libssl-3-x64.dll, which the globs below and the Templator patch expect).
+# MSYS2's default moved to OpenSSL 4 (libssl-4-x64.dll), which nobody has run BunkerWeb on: fail early with a clear message.
+OPENSSL_VERSION_LINE="$("$PREFIX_UCRT/bin/openssl.exe" version | tr -d '\r')"
+echo "$OPENSSL_VERSION_LINE"
+case "$OPENSSL_VERSION_LINE" in
+	"OpenSSL 3."*) ;;
+	*) echo "expected OpenSSL 3.x from MSYS2 (the workflow pins mingw-w64-ucrt-x86_64-openssl), got: $OPENSSL_VERSION_LINE" >&2; exit 1 ;;
+esac
+endgroup
+
 # ------------------------------------------------------------------------------------- LuaJIT
 group "LuaJIT"
 make -C "$D/luajit" -j"$NPROC" CC=gcc BUILDMODE=dynamic
@@ -207,6 +219,20 @@ export ZSTD_LIB="$D/zstd/lib"
 	--add-module="$D/zstd-nginx-module" \
 	--add-module="$D/modsecurity-nginx" \
 	|| { echo "--- objs/autoconf.err (tail) ---"; tail -n 80 objs/autoconf.err || true; exit 1; }
+endgroup
+
+group "nginx: configure sanity"
+# nginx sources every module's config script in ONE shell and auto/feature defines $ngx_feature_name whenever a test passes:
+# a module that forgets to set its own name defines the previous module's (zstd-nginx-module made stream-lua believe it has
+# sigaction()/SA_RESTART, which MinGW does not, see windows/patches). Both lua modules' own tests report "not found" on
+# win32, so neither macro may be defined.
+for macro in NGX_HTTP_LUA_HAVE_SA_RESTART NGX_STREAM_LUA_HAVE_SA_RESTART; do
+	if grep -q "$macro" objs/ngx_auto_config.h; then
+		echo "objs/ngx_auto_config.h defines $macro although the SA_RESTART test said 'not found' (a module's config leaks its predecessor's feature name):" >&2
+		grep -n "$macro" objs/ngx_auto_config.h >&2
+		exit 1
+	fi
+done
 endgroup
 
 group "nginx: link OpenSSL statically"

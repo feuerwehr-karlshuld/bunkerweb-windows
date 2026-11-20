@@ -78,8 +78,15 @@ env:
   # identical binary as tools/busybox64.exe (same SHA-256), so it is used as the fallback.
   BUSYBOX_FALLBACK_URL: https://community.chocolatey.org/api/v2/package/busybox/6354.0.0
   BUSYBOX_FALLBACK_MEMBER: tools/busybox64.exe
-  WINSW_URL: https://github.com/winsw/winsw/releases/download/v2.12.0/WinSW.NET461.exe
-  WINSW_SHA256: b5066b7bbdfba1293e5d15cda3caaea88fbeab35bd5b38c41c913d492aadfc4f
+  # 2.13 renamed the .NET Framework build to NET462 (4.6.1 is dropped; every supported Windows Server has 4.7.2+); the
+  # release assets carry a _Release suffix
+  WINSW_URL: https://github.com/winsw/winsw/releases/download/v2.13.0/WinSW.NET462.exe_Release
+  WINSW_SHA256: e139f9c1dec5c87a0f51a01668b6cc819286c26b8d26c21c6a2ac128993496c6
+  # nginx.exe links OpenSSL statically (whole archive, for LuaJIT FFI) and BunkerWeb's own images ship OpenSSL 3.5, so the
+  # MSYS2 package is pinned to the 3.x series (MSYS2 moved to 4.1.0 in Nov 2026, DLLs are libssl-4-x64.dll then). The MSYS2
+  # archive keeps old versions. Change the file name and its SHA-256 together; tools-watch.py reports newer 3.x packages.
+  MSYS2_OPENSSL_PKG: mingw-w64-ucrt-x86_64-openssl-3.6.5-1-any.pkg.tar.zst
+  MSYS2_OPENSSL_SHA256: 773e021ebad83f14b5c103db467411e8ff064663e1c7e7f730e2be72f4117064
 
 jobs:
   # ------------------------------------------------------------------------------------------ ModSecurity (MSVC)
@@ -190,7 +197,7 @@ jobs:
         uses: actions/cache/restore@v6
         with:
           path: build/native
-          key: native-v${{ env.CACHE_VERSION }}-${{ steps.src.outputs.bunkerweb }}-${{ hashFiles('windows/build/apply-windows-port.py', 'windows/build/pathrewrite.py', 'windows/build/patchseries.py', 'windows/patches/**', 'windows/build/patch-modsecurity.py', 'windows/build/build-modsecurity.ps1', 'windows/build/build-native.sh', 'windows/overlay/src/**', '.github/actions/prepare-src/action.yml') }}
+          key: native-v${{ env.CACHE_VERSION }}-${{ steps.src.outputs.bunkerweb }}-${{ env.MSYS2_OPENSSL_SHA256 }}-${{ hashFiles('windows/build/apply-windows-port.py', 'windows/build/pathrewrite.py', 'windows/build/patchseries.py', 'windows/patches/**', 'windows/build/patch-modsecurity.py', 'windows/build/build-modsecurity.ps1', 'windows/build/build-native.sh', 'windows/overlay/src/**', '.github/actions/prepare-src/action.yml') }}
 
       - uses: actions/setup-python@v7
         if: steps.cache.outputs.cache-hit != 'true'
@@ -223,6 +230,17 @@ jobs:
             mingw-w64-ucrt-x86_64-libmaxminddb
             mingw-w64-ucrt-x86_64-file
             mingw-w64-ucrt-x86_64-sqlite3
+
+      # openssl above only pulls in its dependencies: the 3.x series is pinned (see the env block). pacman -U downgrades it.
+      - name: Pin OpenSSL to the 3.x series
+        if: steps.cache.outputs.cache-hit != 'true'
+        shell: msys2 {0}
+        run: |
+          curl -fsSL --retry 5 -o /tmp/openssl.pkg.tar.zst "https://repo.msys2.org/mingw/ucrt64/${{ env.MSYS2_OPENSSL_PKG }}"
+          echo "${{ env.MSYS2_OPENSSL_SHA256 }}  /tmp/openssl.pkg.tar.zst" | sha256sum -c -
+          pacman -U --noconfirm /tmp/openssl.pkg.tar.zst
+          pacman -Q mingw-w64-ucrt-x86_64-openssl
+          ls /ucrt64/bin/libssl-*.dll /ucrt64/bin/libcrypto-*.dll
 
       - name: Build nginx, LuaJIT and Lua modules
         if: steps.cache.outputs.cache-hit != 'true'

@@ -1,0 +1,7 @@
+# Updates that were looked at and deliberately not taken, read by tools-watch.py: `<name> <version>  # why`.
+# The entry only silences that exact version; the next release is reported again.
+#
+# <name> is the action (actions/checkout), `winsw`, `busybox-w32` or `waitress`.
+# <version> is the full latest version as the check prints it (`v8.0.0` and `8.0.0` are the same).
+#
+# Nothing is declined at the moment.

@@ -1,4 +1,4 @@
-<!-- BunkerWeb for Windows: nginx (WinSW 2.12) - port of bunkerweb.service / start.sh -->
+<!-- BunkerWeb for Windows: nginx (WinSW 2.x) - port of bunkerweb.service / start.sh -->
 <service>
   <id>bunkerweb-nginx</id>
   <name>BunkerWeb (nginx)</name>

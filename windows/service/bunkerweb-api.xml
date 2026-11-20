@@ -1,4 +1,4 @@
-<!-- BunkerWeb for Windows: external REST API (WinSW 2.12) - port of bunkerweb-api.service.
+<!-- BunkerWeb for Windows: external REST API (WinSW 2.x) - port of bunkerweb-api.service.
      Installed but disabled by default, like on Linux. Enable with:
        Set-Service bunkerweb-api -StartupType Automatic; Start-Service bunkerweb-api -->
 <service>

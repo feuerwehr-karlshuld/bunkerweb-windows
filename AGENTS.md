@@ -15,7 +15,7 @@ HTTP backends on the same server and in the LAN, Let's Encrypt via **HTTP-01** (
 
 ## Hard rules
 
-1. **Never modify anything in `bunkerweb/`.** It is a pinned git submodule (upstream tag, currently v1.6.18-rc5).
+1. **Never modify anything in `bunkerweb/`.** It is a pinned git submodule (upstream tag, currently v1.6.18).
    All Windows changes are applied to a *copy* (`build/src`) at build time by `windows/build/apply-windows-port.py` or come from
    `windows/overlay/`. If upstream code must change, prefer (in this order) a runtime shim in `windows/overlay/`, a pattern in
    `pathrewrite.py`, a patch in `windows/patches/` (via `patchtool.py`, never hand-edited), and only then an anchored one-line
@@ -139,7 +139,7 @@ target commit is the current one (a rerun keeps its number).
   add a check to the smoke test if it is cheap. When you cannot test, document the risk.
 - Keep `README.md` consistent with reality: ports, paths, service names, `bwctl` commands, defaults. The operator guide is
   part of the deliverable.
-- Settings defaults quoted in the guide were checked against the 1.6.18-rc5 sources (`LETS_ENCRYPT_CHALLENGE=http`,
+- Settings defaults quoted in the guide were checked against the 1.6.18 sources (identical to 1.6.18-rc5 for all of them: the rc5 -> 1.6.18 diff touches no `settings.json` and only labels/values of the blacklist presets in `plugin.json`; `LETS_ENCRYPT_CHALLENGE=http`,
   `AUTO_REDIRECT_HTTP_TO_HTTPS=yes`, `DISABLE_DEFAULT_SERVER=no`, `USE_BACKUP=yes`, `USE_MODSECURITY_GLOBAL_CRS=no`,
   `USE_BUNKERNET`/`USE_DNSBL=yes`, `USE_ZSTD=no`). Re-verify after upgrades.
 
@@ -325,9 +325,28 @@ Bump every occurrence (`grep -rn 'uses: owner/repo@' .github`), including `.gith
 
 ## Current state
 
-*Last updated 2026-11-20 (upgrade to 1.6.18-rc5). Update this section whenever the pipeline state changes. Step numbers (3c, 7b, 12b, 12c, 12d, 13, ...) in the
+*Last updated 2026-11-23 (upgrade to 1.6.18). Update this section whenever the pipeline state changes. Step numbers (3c, 7b, 12b, 12c, 12d, 13, ...) in the
 history below refer to `apply-windows-port.py` as it was before the robustness refactor (the multi-line ones are now patches, see the ledger in
 `windows/patches/README.md`).*
+
+- **Upgrade v1.6.18-rc5 -> v1.6.18 (2026-11-23, Linux port check green, nothing of it has run in CI):** the submodule is at the final
+  tag. `git diff v1.6.18-rc5 v1.6.18` outside docs/Dockerfiles/tests/`misc` is Python only: `blacklist-download.py` (one cache file per
+  kind and URL, retired preset `ip:laurent-minne-data-shield-critical` now resolves to `...-aggressive`), `scheduler/main.py`
+  (`IGNORE_FAIL_SENDING_CONFIG` handling of failed pushes, `finish_folder_push`), the UI easy mode (`reset_cleared_settings`), the
+  blacklist `plugin.json` labels/values, the version stamp (`Database.py`, `model.py`) and four new `upgrade_to_version_1_6_18`
+  alembic migrations that only set the version. **No change** in `src/deps`, any requirements file, nginx/Lua sources, `src/linux`,
+  `src/common/helpers`, `settings.json`: so nothing in `build-native.sh`, `build-python.ps1`, `bwsvc.py` or the shims needed work.
+  - `patchtool.py import --rev v1.6.18` rebased all 11 patches without a conflict; `export` changed only `windows/patches/BASE`.
+    The anchored replacements all matched; the hazard scan reported nothing new (baseline unchanged, 392 occurrences).
+  - `src/VERSION` is now `1.6.18` (no suffix): the `Version` step, the `release` job and `port-check.yml`'s upstream-watch handle it by
+    the same code as before (tag `v1.6.18-win1`, a regular release, marked *latest*; the earlier `v1.6.18-rc5-win*` pre-releases
+    stay and do not count for the revision number). No `CACHE_VERSION` bump: no build script changed, the submodule commit changes
+    every BunkerWeb-dependent key.
+  - Docs: README (version, release naming, a 1.6.18 note about the retired Data-Shield Critical preset), `windows/README.md`.
+  - Unverified (CI only): the whole pipeline on the new commit; the first run is all cache misses (modsecurity ~20 min). Watch the
+    scheduler's new push-failure code path under the smoke test and the blacklist job (`blacklist-download` log in the scheduler log;
+    it only writes cache files through `JOB.cache_file`, which is the same Windows-safe path as before). The first run also is the
+    first with a non-pre-release version: check the `Version` step prints `1.6.18` / revision 1 and that the release is marked latest.
 
 - **Native job of the second 1.6.18-rc5 run (2026-11-20, fix unverified):** nginx now compiles and links (zstd static, patch 11 worked).
   It failed in "runtime DLLs and tools" with `libssl-3*.dll is missing from sbin`: the MSYS2 `openssl` package had moved to **4.1.0**
@@ -548,7 +567,7 @@ history below refer to `apply-windows-port.py` as it was before the robustness r
   (OpenSSL whole-archive, libModSecurity import lib, module linking), Python 3.14 wheel availability, `stage.ps1`
   required-files check, installer script, runtime behaviour of the shims and `bwsvc.py` in the smoke test (reload via named
   events, certbot invocation, WinSW service dependencies).
-- After a green run (the pre-release `v1.6.18-rc5-win1` appears by itself): trial on a non-critical server including a Let's Encrypt *staging* issuance.
+- After a green run (the pre-release `v1.6.18-win1` appears by itself, as a regular release; the `v1.6.18-rc5-win1` and `-win2` tags in the git history show that the rc5 pipeline got through the smoke test, this was not checked against the run logs): trial on a non-critical server including a Let's Encrypt *staging* issuance.
 - Operator guide and installer have never run on a real server. Do not describe anything as "tested" beyond what the smoke test
   in a green CI run covers.
 

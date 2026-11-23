@@ -7,7 +7,7 @@ sources, and this README is the operator guide for installing and running it.
 | Item | Version used in this guide |
 |---|---|
 | Host OS | Windows Server 2019 / 2022 / 2025, x64, Desktop Experience or Core |
-| BunkerWeb | 1.6.18-rc5 (an upstream release candidate), built natively for Windows by this repository (`windows/`, GitHub Actions) |
+| BunkerWeb | 1.6.18, built natively for Windows by this repository (`windows/`, GitHub Actions) |
 | Runtime | nginx with OpenResty modules, LuaJIT, ModSecurity v3 + OWASP CRS, CPython 3.14, all bundled |
 | Services | Four Windows services (WinSW), no containers, no VMs, no WSL |
 | Certificates | Let's Encrypt, **HTTP-01** challenge (DNS records are maintained by hand) |
@@ -79,7 +79,7 @@ older nginx + win-acme setup that this replaces (section 4).
 Milestones, in order:
 
 1. **Green CI pipeline**: every job (modsecurity, native, python, package, smoke-test) passes on `windows-2022`.
-2. **First release** `v<version>-win1`, published automatically once the smoke test passes (a failing smoke test only produces the draft `v<version>-win1-RC`). With the submodule on the release candidate 1.6.18-rc5 that is `v1.6.18-rc5-win1`, published as a GitHub *pre-release*.
+2. **First release** `v<version>-win1`, published automatically once the smoke test passes (a failing smoke test only produces the draft `v<version>-win1-RC`). With the submodule on BunkerWeb 1.6.18 that is `v1.6.18-win1`. (Builds of an upstream release candidate, e.g. `v1.6.18-rc5-win1`, are published as GitHub *pre-releases*.)
 3. **Trial on a non-critical server**: install, Let's Encrypt *staging* end to end, a few real backends, reboot and upgrade tests.
 4. **Production cutover** following [section 4](#4-migrating-from-the-existing-nginx--win-acme-setup), with rollback ready.
 5. **Routine upgrades** to new BunkerWeb releases ([section 11.5](#115-upgrading-bunkerweb)).
@@ -225,7 +225,7 @@ The installer is produced by the GitHub Actions workflow
   only), which must not be used. *(No release exists until the pipeline is green, see [project status](#project-status).)*
 - **Pre-releases**: builds of an upstream release candidate are tagged with its version as upstream spells its tag
   (`v1.6.18-rc5-win1`, installer `bunkerweb-1.6.18-rc5-win1-x64-setup.exe`), are marked *Pre-release* and never become the
-  *latest* release. Use them for testing only.
+  *latest* release. Use them for testing only. Builds of a final BunkerWeb release (`v1.6.18-win1`) are regular releases.
 - **CI builds**: *Actions* → *BunkerWeb for Windows* → a successful run → artifact `installer`. To build on demand, use
   *Run workflow* (`workflow_dispatch`).
 
@@ -1139,6 +1139,11 @@ are one-way.
   scheduler log after the upgrade.
 - New: Zstandard compression per service (`USE_ZSTD=yes`, off by default), `DNSBL_LIST` per service,
   `*_URLS_REFRESH_INTERVAL` for black/grey/whitelist URLs, `CLIENT_HEADER_TIMEOUT`/`CLIENT_BODY_TIMEOUT` per service.
+- Final 1.6.18 (changes since the release candidate 1.6.18-rc5): the blacklist community preset
+  `ip:laurent-minne-data-shield-critical` is retired (the public Critical list is gone, it is now part of the paid Data-Shield
+  Pro); a `BLACKLIST_COMMUNITY_LISTS` that still names it silently uses `ip:laurent-minne-data-shield-aggressive` (the free
+  Community Standard list) and the scheduler log says so. Remove the old id from `variables.env` to silence the warning.
+  Everything else is internal (scheduler push handling, easy-mode form handling in the UI, a version-stamp migration).
 
 ### 11.6 Uninstalling
 

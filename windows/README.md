@@ -200,8 +200,8 @@ checks that the firewall rule, the listeners and the proxied requests use exactl
 
 **Releases:** created by the `release` job (main only) as `v<bunkerweb-version>-win<N>`, for example `v1.6.17-win1`.
 `<bunkerweb-version>` is `bunkerweb/src/VERSION` with `~` written as `-` (git tags cannot contain `~`): BunkerWeb
-`1.6.18~rc5` gives `v1.6.18-rc5-win1`. Builds of an upstream pre-release are published as GitHub *pre-releases* and are
-never marked latest. The release is only published when the smoke test passes.
+`1.6.18~rc5` gives `v1.6.18-rc5-win1`, `1.6.18` gives `v1.6.18-win1`. Builds of an upstream pre-release are published as
+GitHub *pre-releases* and are never marked latest. The release is only published when the smoke test passes.
 
 The first ModSecurity build compiles its conan dependencies (Poco, libcurl, libxml2, ...) and can take
 a long time. They are cached afterwards.
@@ -277,6 +277,10 @@ The 1.6.17 -> 1.6.18-rc5 upgrade needed: zstd (library + nginx module) in `build
 shims (`open/write/close/getpid`, `os.rename`), the new stream `reuseport` variable in `apply-windows-port.py`, the
 Templator patch rebased onto upstream's explicit `fork` context, the 1.6.18 changes of `start.sh`/`bunkerweb-scheduler.sh`
 in `bwsvc.py`, and release tags without `~`.
+
+The 1.6.18-rc5 -> 1.6.18 upgrade needed nothing but the submodule move: the patches rebased without conflicts (only `BASE`
+changed), `src/deps`, requirements, nginx/Lua sources and the Linux service scripts are identical, and the hazard baseline
+was unchanged. Upstream changed Python only (blacklist job, scheduler push handling, UI easy mode, a version-stamp migration).
 
 ---
 

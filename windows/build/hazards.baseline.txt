@@ -37,9 +37,13 @@
 1	bw/lua/bunkerweb/pushswap.lua	process spawn: io.popen
 2	bw/lua/bunkerweb/pushswap.lua	process spawn: os.execute
 1	bw/lua/bunkerweb/pushswap.lua	shell command: cp
+1	bw/lua/bunkerweb/pushswap.lua	shell command: find
 1	bw/lua/bunkerweb/pushswap.lua	shell command: mkdir
-5	bw/lua/bunkerweb/pushswap.lua	shell command: rm
+4	bw/lua/bunkerweb/pushswap.lua	shell command: rm
+2	bw/lua/bunkerweb/pushswap.lua	shell command: sh
+1	bw/lua/bunkerweb/pushswap.lua	shell command: tar
 1	bw/lua/bunkerweb/pushswap.lua	signal: SIGKILL
+2	bw/lua/bunkerweb/pushswap.lua	uid/gid: umask
 1	bw/lua/bunkerweb/pushswap.lua	write open (lua): w
 1	common/cli/CLI.py	shell command: file
 1	common/cli/CLI.py	shell command: service

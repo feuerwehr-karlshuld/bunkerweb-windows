@@ -246,12 +246,12 @@ issue labelled `upstream-update` when the port no longer applies, so the work us
 1. Move the submodule to the new release tag:
    ```sh
    git -C bunkerweb fetch --tags
-   git -C bunkerweb checkout v1.6.18
+   git -C bunkerweb checkout v1.6.19-rc1
    git add bunkerweb
    ```
 2. Move the patch series with git's 3-way merge (nothing is written to `bunkerweb/`):
    ```sh
-   python windows/build/patchtool.py import --force --rev v1.6.18
+   python windows/build/patchtool.py import --force --rev v1.6.19-rc1
    #   conflict: resolve in build/patchwork, `git add`, `git rebase --continue`
    python windows/build/patchtool.py export
    ```
@@ -281,6 +281,13 @@ in `bwsvc.py`, and release tags without `~`.
 The 1.6.18-rc5 -> 1.6.18 upgrade needed nothing but the submodule move: the patches rebased without conflicts (only `BASE`
 changed), `src/deps`, requirements, nginx/Lua sources and the Linux service scripts are identical, and the hazard baseline
 was unchanged. Upstream changed Python only (blacklist job, scheduler push handling, UI easy mode, a version-stamp migration).
+
+The 1.6.18 -> 1.6.19-rc1 upgrade rebased all 11 patches without conflicts (`BASE` updated to `v1.6.19-rc1`). Upstream
+bumped vendored nginx to 1.30.8 (`build-native.sh` compiles `$D/nginx`), added `nginx-1.30.7` only for Fedora/Docker
+and `-Wl,-Bsymbolic` for Linux `zlib`, changed `Database.py` / `model.py` / migrations, chunked large host lists in
+`*.modsec-crs`, and added `skip_unchanged` in `pushswap.lua` / `api.lua` (which triggers on Windows because `INTEGRATION`
+is `Linux`, shelling out via `busybox` to `sh`, `stat`, `readlink`, `printf`, `find`, `chmod`; `hazards.baseline.txt`
+updated after review, and `chmod`/`stat`/`readlink`/`printf` added to the smoke test's busybox applet check).
 
 ---
 

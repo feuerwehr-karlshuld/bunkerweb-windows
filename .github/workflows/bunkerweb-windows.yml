@@ -640,10 +640,10 @@ jobs:
 
       - name: Busybox applets used by BunkerWeb are available
         run: |
-          # pushswap.lua, api.lua and the scheduler shell out to these (tar for the /confs push, uname for bunkernet)
+          # pushswap.lua, api.lua and the scheduler shell out to these (tar for the /confs push, stat/readlink/chmod/printf for skip_unchanged/drop_staging, uname for bunkernet)
           $bb = 'C:\bunkerweb\usr\bin\busybox.exe'
           $applets = (& $bb --list) -split "`r?`n"
-          $missing = 'sh', 'tar', 'gzip', 'find', 'ls', 'cp', 'rm', 'mkdir', 'test', 'uname', 'mv', 'cat' | Where-Object { $applets -notcontains $_ }
+          $missing = 'sh', 'tar', 'gzip', 'find', 'ls', 'cp', 'rm', 'mkdir', 'test', 'uname', 'mv', 'cat', 'chmod', 'stat', 'readlink', 'printf' | Where-Object { $applets -notcontains $_ }
           if ($missing) { throw "busybox lacks applets: $($missing -join ', ')" }
           & $bb uname -m
 

@@ -7,7 +7,7 @@ sources, and this README is the operator guide for installing and running it.
 | Item | Version used in this guide |
 |---|---|
 | Host OS | Windows Server 2019 / 2022 / 2025, x64, Desktop Experience or Core |
-| BunkerWeb | 1.6.18, built natively for Windows by this repository (`windows/`, GitHub Actions) |
+| BunkerWeb | 1.6.19-rc1 (an upstream release candidate), built natively for Windows by this repository (`windows/`, GitHub Actions) |
 | Runtime | nginx with OpenResty modules, LuaJIT, ModSecurity v3 + OWASP CRS, CPython 3.14, all bundled |
 | Services | Four Windows services (WinSW), no containers, no VMs, no WSL |
 | Certificates | Let's Encrypt, **HTTP-01** challenge (DNS records are maintained by hand) |
@@ -79,7 +79,7 @@ older nginx + win-acme setup that this replaces (section 4).
 Milestones, in order:
 
 1. **Green CI pipeline**: every job (modsecurity, native, python, package, smoke-test) passes on `windows-2022`.
-2. **First release** `v<version>-win1`, published automatically once the smoke test passes (a failing smoke test only produces the draft `v<version>-win1-RC`). With the submodule on BunkerWeb 1.6.18 that is `v1.6.18-win1`. (Builds of an upstream release candidate, e.g. `v1.6.18-rc5-win1`, are published as GitHub *pre-releases*.)
+2. **First release** `v<version>-win1`, published automatically once the smoke test passes (a failing smoke test only produces the draft `v<version>-win1-RC`). For regular releases (e.g. `1.6.18`) that is `v1.6.18-win1`; with the submodule on the release candidate `1.6.19-rc1` that is `v1.6.19-rc1-win1`, published as a GitHub *pre-release*.
 3. **Trial on a non-critical server**: install, Let's Encrypt *staging* end to end, a few real backends, reboot and upgrade tests.
 4. **Production cutover** following [section 4](#4-migrating-from-the-existing-nginx--win-acme-setup), with rollback ready.
 5. **Routine upgrades** to new BunkerWeb releases ([section 11.5](#115-upgrading-bunkerweb)).
@@ -1144,6 +1144,13 @@ are one-way.
   Pro); a `BLACKLIST_COMMUNITY_LISTS` that still names it silently uses `ip:laurent-minne-data-shield-aggressive` (the free
   Community Standard list) and the scheduler log says so. Remove the old id from `variables.env` to silence the warning.
   Everything else is internal (scheduler push handling, easy-mode form handling in the UI, a version-stamp migration).
+
+**Notes for 1.6.18 → 1.6.19-rc1** (from the upstream changes, the ones relevant here):
+
+- Upstream release candidate (`v1.6.19-rc1-win1`, published as a pre-release).
+- Bundled nginx updated to 1.30.8.
+- ModSecurity global CRS (`USE_MODSECURITY_GLOBAL_CRS=yes`): large host lists in `antibot`, `ip-host` and `ui` rules are now split across marker rules so they stay below libModSecurity's 64 KiB PCRE2 regex size limit.
+- Internal/database fixes: local `/custom_configs` self-pushes skip unchanged entries instead of re-swapping them, and PRO plugin settings in the database survive scheduler restarts before PRO files are on disk.
 
 ### 11.6 Uninstalling
 

@@ -15,7 +15,7 @@ HTTP backends on the same server and in the LAN, Let's Encrypt via **HTTP-01** (
 
 ## Hard rules
 
-1. **Never modify anything in `bunkerweb/`.** It is a pinned git submodule (upstream tag, currently v1.6.18).
+1. **Never modify anything in `bunkerweb/`.** It is a pinned git submodule (upstream tag, currently v1.6.19-rc1).
    All Windows changes are applied to a *copy* (`build/src`) at build time by `windows/build/apply-windows-port.py` or come from
    `windows/overlay/`. If upstream code must change, prefer (in this order) a runtime shim in `windows/overlay/`, a pattern in
    `pathrewrite.py`, a patch in `windows/patches/` (via `patchtool.py`, never hand-edited), and only then an anchored one-line
@@ -325,9 +325,32 @@ Bump every occurrence (`grep -rn 'uses: owner/repo@' .github`), including `.gith
 
 ## Current state
 
-*Last updated 2026-11-23 (upgrade to 1.6.18). Update this section whenever the pipeline state changes. Step numbers (3c, 7b, 12b, 12c, 12d, 13, ...) in the
+*Last updated 2026-11-27 (upgrade to 1.6.19-rc1). Update this section whenever the pipeline state changes. Step numbers (3c, 7b, 12b, 12c, 12d, 13, ...) in the
 history below refer to `apply-windows-port.py` as it was before the robustness refactor (the multi-line ones are now patches, see the ledger in
 `windows/patches/README.md`).*
+
+- **Upgrade v1.6.18 -> v1.6.19-rc1 (2026-11-27, Linux port check green without lupa/jinja2 installed locally, nothing of it has run in CI):**
+  the submodule moved from `b80cb2e` (`v1.6.18`) to `c80b2e7` (`v1.6.19-rc1`, `src/VERSION` = `1.6.19~rc1`).
+  - `patchtool.py import --force --rev v1.6.19-rc1` rebased all 11 patches without a conflict; `export` updated only `windows/patches/BASE`.
+    All anchored replacements in `apply-windows-port.py` matched unchanged. No `CACHE_VERSION` bump (no build script changed; the
+    submodule commit invalidates all BunkerWeb-dependent build caches, and the only workflow edit is in `smoke-test`).
+  - `src/deps`: `nginx` bumped `1.30.7` -> `1.30.8` (only `nginx.h`, `ngx_output_chain.c`, `ngx_http_write_filter_module.c` changed;
+    `build-native.sh` compiles `$D/nginx`), `nginx-1.30.7` added only for Fedora 44/45 and Docker images, and `install.sh` added
+    `-Wl,-Bsymbolic` for Linux `zlib` (unneeded on Windows: `libz.so` is a copy of MSYS2 `zlib1.dll` and Windows DLLs do not use ELF PLT
+    interposition). No new nginx modules, Lua libraries, requirements files, `src/linux/scripts`, `utils.sh`, `settings.json` or `confs/`.
+  - `pushswap.lua` / `api.lua`: upstream added `skip_unchanged` for local `/custom_configs` self-pushes (`is_local_self_push`),
+    `entry_kind` (`sh -c` with `stat -c %a`, `readlink`, `printf`), `list_checked` (`sh -c` with `printf '%s\000'`), `same_bytes` (`rb`)
+    and `drop_staging` (`find ... -exec chmod u+rwx {} \;; rm -rf ...`). Because `stage.ps1` sets `INTEGRATION` to `Linux` and
+    `SCHEDULER_MARKER` (`/bunkerweb/usr/share/bunkerweb/scheduler/main.py`, rewritten by `pathrewrite.py`) exists, `is_local_self_push`
+    evaluates to `true` on Windows. `wincompat.lua` runs `io.popen`/`os.execute` via `busybox sh -c` preserving NUL bytes and normalizing
+    CRLF; if `entry_kind` or `list_checked` ever returns `nil`, `same_tree` falls back to swapping normally. Smoke test's busybox applet
+    check now also verifies `chmod`, `stat`, `readlink`, `printf`. `hazards.baseline.txt` updated after review (222 entries, 397 occurrences).
+  - Other upstream changes: `Database.py` (`_collation_key`, preserving PRO settings across scheduler restarts), `model.py` + 4 alembic
+    `upgrade_to_version_1_6_19_rc1` migrations, and chunked marker rules in `{antibot,ip-host,ui}.modsec-crs` for the 64 KiB PCRE2 limit.
+  - `src/VERSION` is `1.6.19~rc1`: tag `v1.6.19-rc1-win1`, GitHub pre-release (not marked *latest*).
+  - Unverified (CI only): the whole pipeline on `v1.6.19-rc1` (nginx 1.30.8 build/link, smoke test including the new busybox applet checks,
+    and runtime behaviour of `pushswap.lua` `skip_unchanged` / `drop_staging` under `busybox-w32` during `/custom_configs` pushes; also
+    note local Linux `lupa`/`jinja2` checks were skipped because those packages are not installed in this environment).
 
 - **Upgrade v1.6.18-rc5 -> v1.6.18 (2026-11-23, Linux port check green, nothing of it has run in CI):** the submodule is at the final
   tag. `git diff v1.6.18-rc5 v1.6.18` outside docs/Dockerfiles/tests/`misc` is Python only: `blacklist-download.py` (one cache file per
@@ -567,7 +590,7 @@ history below refer to `apply-windows-port.py` as it was before the robustness r
   (OpenSSL whole-archive, libModSecurity import lib, module linking), Python 3.14 wheel availability, `stage.ps1`
   required-files check, installer script, runtime behaviour of the shims and `bwsvc.py` in the smoke test (reload via named
   events, certbot invocation, WinSW service dependencies).
-- After a green run (the pre-release `v1.6.18-win1` appears by itself, as a regular release; the `v1.6.18-rc5-win1` and `-win2` tags in the git history show that the rc5 pipeline got through the smoke test, this was not checked against the run logs): trial on a non-critical server including a Let's Encrypt *staging* issuance.
+- After a green run on `v1.6.19-rc1` (which publishes the pre-release `v1.6.19-rc1-win1`, not *latest*; when final `v1.6.19` is tagged, upgrade to that for a regular release): trial on a non-critical server including a Let's Encrypt *staging* issuance.
 - Operator guide and installer have never run on a real server. Do not describe anything as "tested" beyond what the smoke test
   in a green CI run covers.
 
